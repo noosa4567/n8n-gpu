@@ -1,28 +1,27 @@
 name: Build and Push n8n GPU Image
 
 on:
-  workflow_dispatch:  # Manual trigger
+  workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'  # Daily check (fallback)
+    - cron: '0 0 * * *'
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write  # Changed from 'read' to 'write'
       packages: write
     steps:
       - uses: actions/checkout@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
       - name: Check n8n Version
         id: check_version
         run: |
-          # Fetch the latest n8n image digest
           LATEST_DIGEST=$(docker manifest inspect docker.n8n.io/n8nio/n8n:latest | jq -r '.manifests[0].digest')
           echo "Latest digest: $LATEST_DIGEST"
-
-          # Get the last built digest (store in a file or cache)
           echo "LAST_DIGEST=$(cat last_digest.txt 2>/dev/null || echo '')" >> $GITHUB_ENV
           if [ "$LAST_DIGEST" != "$LATEST_DIGEST" ]; then
             echo "Version changed, building new image"
