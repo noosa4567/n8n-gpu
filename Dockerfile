@@ -8,8 +8,9 @@ RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-fr
     apt-get update
 
 RUN apt-get install -y \
-    git pkg-config yasm nasm build-essential libass-dev libfreetype6-dev libsdl2-dev libtheora-dev libtool libva-dev libvdpau-dev libvorbis-dev libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev texinfo zlib1g-dev libx264-dev libx265-dev libnuma-dev libvpx-dev libfdk-aac-dev libmp3lame-dev libopus-dev libdav1d-dev libunistring-dev \
-    libsndio-dev \
+    git pkg-config yasm nasm build-essential autoconf automake libtool libc6-dev \
+    libass-dev libfreetype6-dev libsdl2-dev libtheora-dev libva-dev libvdpau-dev libvorbis-dev libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev texinfo zlib1g-dev libx264-dev libx265-dev libnuma-dev libvpx-dev libfdk-aac-dev libmp3lame-dev libopus-dev libdav1d-dev libunistring-dev \
+    libasound2-dev  # Removed libsndio-dev, relying on libasound2-dev for audio \
     python3 python3-pip python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
@@ -20,10 +21,10 @@ RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git && \
 
 RUN git clone https://git.ffmpeg.org/ffmpeg.git && \
     cd ffmpeg && \
-    ./configure --enable-gpl --enable-libass --enable-libfdk-aac --enable-libfreetype --enable-libmp3lame --enable-libopus --enable-libvorbis --enable-libvpx --enable-libx264 --enable-libx265 --enable-nonfree --enable-nvenc --enable-nvdec --enable-cuvid --enable-libsndio && \
-    make -j$(nproc) && \
+    ./configure --enable-gpl --enable-libass --enable-libfdk-aac --enable-libfreetype --enable-libmp3lame --enable-libopus --enable-libvorbis --enable-libvpx --enable-libx264 --enable-libx265 --enable-nonfree --enable-nvenc --enable-nvdec --enable-cuvid --enable-libasound V=1 && \
+    make -j$(nproc) V=1 && \
     make install && \
-    cd .. && rm -rf ffmpeg
+    cd .. && rm -rf ffmpeg || echo "FFmpeg build failed, check logs"
 
 RUN pip3 install --no-cache-dir --break-system-packages --target=/usr/local/lib/python3.11/dist-packages torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 RUN pip3 install --no-cache-dir --break-system-packages --target=/usr/local/lib/python3.11/dist-packages openai-whisper
