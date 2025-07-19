@@ -21,7 +21,7 @@ RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git && \
 
 RUN git clone https://git.ffmpeg.org/ffmpeg.git && \
     cd ffmpeg && \
-    ./configure --enable-gpl --enable-libass --enable-libfdk-aac --enable-libfreetype --enable-libmp3lame --enable-libopus --enable-libvorbis --enable-libvpx --enable-libx264 --enable-libx265 --enable-nonfree --enable-nvenc --enable-nvdec --enable-cuvid --enable-libasound V=1 && \
+    ./configure --enable-gpl --enable-libass --enable-libfdk-aac --enable-libfreetype --enable-libmp3lame --enable-libopus --enable-libvorbis --enable-libvpx --enable-libx264 --enable-libx265 --enable-nonfree --enable-nvenc --enable-nvdec --enable-cuvid --enable-alsa V=1 && \
     make -j$(nproc) V=1 && \
     make install && \
     cd .. && rm -rf ffmpeg || echo "FFmpeg build failed, check logs"
