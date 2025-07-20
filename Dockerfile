@@ -18,12 +18,12 @@ RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-fr
       python3 python3-pip python3-venv ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 
-# 2) Install NVIDIA NVENC/NVDEC headers
+# 2) NVIDIA NVENC/NVDEC headers
 RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git \
  && cd nv-codec-headers && make install \
  && cd .. && rm -rf nv-codec-headers
 
-# 3) Build & install FFmpeg (sndio + NVENC/NVDEC), with verbose logs & verify
+# 3) Build & install FFmpeg (sndio + GPU accel), verbose & verify
 RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
  && cd ffmpeg \
  && ./configure --prefix=/usr/local \
@@ -38,16 +38,16 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
  && cd .. && rm -rf ffmpeg \
  && ffmpeg -version
 
-# 4) Refresh loader cache & add custom paths
-RUN echo "/usr/local/lib"       > /etc/ld.so.conf.d/ffmpeg.conf \
+# 4) Refresh loader cache for FFmpeg & CUDA libs
+RUN echo "/usr/local/lib"        > /etc/ld.so.conf.d/ffmpeg.conf \
  && echo "/usr/local/nvidia/lib" > /etc/ld.so.conf.d/nvidia.conf \
  && ldconfig
 
-# 5) Install PyTorch (cu118) + Whisper, pre-download model & fix ownership
-RUN python3 -m pip install --no-cache-dir --upgrade pip \
- && python3 -m pip install --no-cache-dir \
+# 5) Install PyTorch (cu118) & Whisper (with PEP668 override), pre-download model, fix perms
+RUN python3 -m pip install --break-system-packages --no-cache-dir --upgrade pip \
+ && python3 -m pip install --break-system-packages --no-cache-dir \
       torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 \
- && python3 -m pip install --no-cache-dir openai-whisper \
+ && python3 -m pip install --break-system-packages --no-cache-dir openai-whisper \
  && mkdir -p /usr/local/lib/whisper_models \
  && python3 -c "from whisper import _download,_MODELS; _download(_MODELS['base'],'/usr/local/lib/whisper_models',in_memory=False)" \
  && chown -R node:node /usr/local/lib/whisper_models
@@ -56,7 +56,7 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip \
 RUN npm install -g n8n \
  && npm cache clean --force
 
-# 7) Prepare QNAP mount points & perms
+# 7) Prepare QNAP mount points & permissions
 RUN mkdir -p /data/shared/videos /data/shared/audio /data/shared/transcripts \
  && chown -R node:node /data /usr/local/lib/whisper_models /home/node \
  && chmod -R 777 /data /usr/local/lib/whisper_models /home/node
@@ -64,11 +64,10 @@ RUN mkdir -p /data/shared/videos /data/shared/audio /data/shared/transcripts \
 # 8) Drop back to unprivileged user
 USER node
 
-# 9) Runtime environment
+# 9) Runtime env & port
 ENV WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/nvidia/lib
-
 EXPOSE 5678
 
-# 10) Use CMD for n8n start (easy override)
+# 10) Use CMD for n8n entry (easy override)
 CMD ["n8n", "start"]
