@@ -2,7 +2,7 @@ FROM node:20-bookworm-slim
 
 USER root
 
-# 1) Enable Bookworm non-free repos & install build/runtime deps (incl. sndio runtime + CUDA toolkit)
+# 1) Enable Bookworm non-free repos & install build/runtime deps
 RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list \
  && echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list \
  && echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list \
@@ -18,14 +18,12 @@ RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-fr
       python3 python3-pip python3-venv ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 
-# 2) NVIDIA codec headers for NVENC/NVDEC
+# 2) Install NVIDIA NVENC/NVDEC headers
 RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git \
- && cd nv-codec-headers \
- && make install \
- && cd .. \
- && rm -rf nv-codec-headers
+ && cd nv-codec-headers && make install \
+ && cd .. && rm -rf nv-codec-headers
 
-# 3) Build & install FFmpeg (with sndio + NVIDIA acceleration)
+# 3) Build & install FFmpeg (sndio + NVENC/NVDEC), with verbose logs & verify
 RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
  && cd ffmpeg \
  && ./configure --prefix=/usr/local \
@@ -35,37 +33,42 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
       --enable-libvpx --enable-libx264 --enable-libx265 \
       --enable-alsa --enable-sndio \
       --enable-nvenc --enable-nvdec --enable-cuvid \
- && make -j"$(nproc)" \
- && make install \
- && cd .. \
- && rm -rf ffmpeg
+ && make -j"$(nproc)" V=1 \
+ && make install V=1 \
+ && cd .. && rm -rf ffmpeg \
+ && ffmpeg -version
 
-# 4) Refresh shared library cache (so /usr/local/lib & CUDA libs are found)
-RUN ldconfig
+# 4) Refresh loader cache & add custom paths
+RUN echo "/usr/local/lib"       > /etc/ld.so.conf.d/ffmpeg.conf \
+ && echo "/usr/local/nvidia/lib" > /etc/ld.so.conf.d/nvidia.conf \
+ && ldconfig
 
-# 5) Install PyTorch (cu118) & Whisper, then pre-download the base model
+# 5) Install PyTorch (cu118) + Whisper, pre-download model & fix ownership
 RUN python3 -m pip install --no-cache-dir --upgrade pip \
  && python3 -m pip install --no-cache-dir \
       torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 \
  && python3 -m pip install --no-cache-dir openai-whisper \
  && mkdir -p /usr/local/lib/whisper_models \
- && python3 -c "from whisper import _download,_MODELS; _download(_MODELS['base'], '/usr/local/lib/whisper_models', in_memory=False)"
+ && python3 -c "from whisper import _download,_MODELS; _download(_MODELS['base'],'/usr/local/lib/whisper_models',in_memory=False)" \
+ && chown -R node:node /usr/local/lib/whisper_models
 
-# 6) Install n8n
+# 6) Install n8n globally
 RUN npm install -g n8n \
  && npm cache clean --force
 
-# 7) Prepare QNAP Container Station volumes & permissions  
-#    (Host-side mounts must also be chmod’d/chown’d appropriately if needed)
-RUN mkdir -p /data/shared/videos /data/shared/audio /data/shared/transcripts /usr/local/lib/whisper_models \
+# 7) Prepare QNAP mount points & perms
+RUN mkdir -p /data/shared/videos /data/shared/audio /data/shared/transcripts \
  && chown -R node:node /data /usr/local/lib/whisper_models /home/node \
  && chmod -R 777 /data /usr/local/lib/whisper_models /home/node
 
-# 8) Drop back to unprivileged `node` user
+# 8) Drop back to unprivileged user
 USER node
 
-EXPOSE 5678
-ENV WHISPER_MODEL_PATH=/usr/local/lib/whisper_models
+# 9) Runtime environment
+ENV WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
+    LD_LIBRARY_PATH=/usr/local/lib:/usr/local/nvidia/lib
 
-# 9) Use CMD (per n8n recommendations) for easier overrides
+EXPOSE 5678
+
+# 10) Use CMD for n8n start (easy override)
 CMD ["n8n", "start"]
