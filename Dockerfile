@@ -1,14 +1,18 @@
 # -----------------------------------------------------------------------------
-# Base image: CUDA 11.8 Devel on Ubuntu 22.04 (bundles CUDA runtimes & dev libs)
+#  Base: CUDA 11.8 Devel on Ubuntu 22.04 (bundles CUDA runtimes & dev libs)
 # -----------------------------------------------------------------------------
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 
-USER root
+# -----------------------------------------------------------------------------
+#  1) Configure non-interactive timezone + install build/runtime deps
+# -----------------------------------------------------------------------------
+ARG DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
+ENV DEBIAN_FRONTEND=${DEBIAN_FRONTEND}
 
-# -----------------------------------------------------------------------------
-# 1) Install build & runtime deps, including libsndio7.0 and full Python
-# -----------------------------------------------------------------------------
+USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
+      tzdata \
       build-essential git pkg-config yasm nasm autoconf automake libtool \
       libfreetype6-dev libass-dev libtheora-dev libva-dev libvdpau-dev \
       libvorbis-dev libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev \
@@ -20,21 +24,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
-# 2) Install Node.js 20 from NodeSource
+#  2) Install Node.js 20 from NodeSource
 # -----------------------------------------------------------------------------
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
- && apt-get update && apt-get install -y nodejs \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
-# 3) Build NVIDIA NVENC/NVDEC headers
+#  3) Build NVIDIA NVENC/NVDEC headers
 # -----------------------------------------------------------------------------
 RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git \
  && cd nv-codec-headers && make install \
  && cd .. && rm -rf nv-codec-headers
 
 # -----------------------------------------------------------------------------
-# 4) Clone, build & install FFmpeg (sndio + NVENC/NVDEC), verbose & verify
+#  4) Clone, build & install FFmpeg (sndio + NVENC/NVDEC), verbose & verify
 # -----------------------------------------------------------------------------
 RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
  && cd ffmpeg \
@@ -52,7 +57,7 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
  && ffmpeg -version
 
 # -----------------------------------------------------------------------------
-# 5) Ensure loader sees /usr/local/lib & CUDA libs at runtime
+#  5) Ensure loader sees /usr/local/lib & CUDA libs at runtime
 # -----------------------------------------------------------------------------
 RUN echo "/usr/local/lib"        > /etc/ld.so.conf.d/ffmpeg.conf \
  && echo "/usr/local/cuda/lib64" > /etc/ld.so.conf.d/cuda.conf \
@@ -61,7 +66,7 @@ RUN echo "/usr/local/lib"        > /etc/ld.so.conf.d/ffmpeg.conf \
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64
 
 # -----------------------------------------------------------------------------
-# 6) Install PyTorch (cu118) + Whisper, pre-download "base" model & fix perms
+#  6) Install PyTorch (cu118) & Whisper, pre-download model & fix perms
 # -----------------------------------------------------------------------------
 RUN python3 -m pip install --no-cache-dir --upgrade pip \
  && python3 -m pip install --no-cache-dir \
@@ -74,24 +79,25 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip \
 ENV WHISPER_MODEL_PATH=/usr/local/lib/whisper_models
 
 # -----------------------------------------------------------------------------
-# 7) Install n8n globally
+#  7) Install n8n globally
 # -----------------------------------------------------------------------------
-RUN npm install -g n8n && npm cache clean --force
+RUN npm install -g n8n \
+ && npm cache clean --force
 
 # -----------------------------------------------------------------------------
-# 8) Prepare QNAP Container Station mounts & permissions
+#  8) Prepare QNAP Container Station mounts & permissions
 # -----------------------------------------------------------------------------
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R node:node /data /usr/local/lib/whisper_models /home/node \
  && chmod -R 777 /data /usr/local/lib/whisper_models /home/node
 
 # -----------------------------------------------------------------------------
-# 9) Drop to unprivileged node user and expose port
+#  9) Drop to unprivileged node user & expose port
 # -----------------------------------------------------------------------------
 USER node
 EXPOSE 5678
 
 # -----------------------------------------------------------------------------
-# 10) Start n8n (CMD for easy overrides)
+# 10) Default command (CMD for easy overrides)
 # -----------------------------------------------------------------------------
 CMD ["n8n", "start"]
