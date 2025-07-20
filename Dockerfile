@@ -1,19 +1,11 @@
-# -----------------------------------------------------------------------------
-#  Base: CUDA 11.8 Devel on Ubuntu 22.04 (bundles CUDA runtimes & dev libs)
-# -----------------------------------------------------------------------------
-FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ Stage 1: Build FFmpeg (with sndio & NVENC/NVDEC)                           │
+# └─────────────────────────────────────────────────────────────────────────────┘
+FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS ffmpeg-builder
 
-# -----------------------------------------------------------------------------
-#  Prevent tzdata prompts
-# -----------------------------------------------------------------------------
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
 
-USER root
-
-# -----------------------------------------------------------------------------
-#  1) Install build & runtime deps (tzdata, libsndio7.0, full Python, etc.)
-# -----------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
       tzdata \
       build-essential git pkg-config yasm nasm autoconf automake libtool \
@@ -22,35 +14,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       zlib1g-dev texinfo libx264-dev libx265-dev libnuma-dev libvpx-dev \
       libfdk-aac-dev libmp3lame-dev libopus-dev libdav1d-dev libunistring-dev \
       libasound2-dev libsndio-dev libsndio7.0 \
-      python3-full python3-dev python3-pip python3-venv \
-      ca-certificates curl gnupg2 dirmngr \
  && rm -rf /var/lib/apt/lists/*
 
-# -----------------------------------------------------------------------------
-#  1a) Create unprivileged 'node' user for runtime
-# -----------------------------------------------------------------------------
-RUN groupadd -r node \
- && useradd  -r -g node -d /home/node -s /bin/bash -c "n8n user" node \
- && mkdir -p /home/node \
- && chown -R node:node /home/node
-
-# -----------------------------------------------------------------------------
-#  2) Install Node.js 20
-# -----------------------------------------------------------------------------
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
- && apt-get update && apt-get install -y --no-install-recommends nodejs \
- && rm -rf /var/lib/apt/lists/*
-
-# -----------------------------------------------------------------------------
-#  3) Build NVIDIA NVENC/NVDEC headers
-# -----------------------------------------------------------------------------
+# NVIDIA NVENC/NVDEC headers
 RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git \
  && cd nv-codec-headers && make install \
  && cd .. && rm -rf nv-codec-headers
 
-# -----------------------------------------------------------------------------
-#  4) Clone, build & install FFmpeg (sndio + GPU accel), verbose & verify
-# -----------------------------------------------------------------------------
+# Build FFmpeg
 RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
  && cd ffmpeg \
  && ./configure --prefix=/usr/local \
@@ -63,58 +34,74 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
  && make -j"$(nproc)" V=1 \
  && make install V=1 \
  && cd .. && rm -rf ffmpeg \
- && ldconfig \
- && ffmpeg -version
+ && ldconfig
 
-# -----------------------------------------------------------------------------
-#  5) Ensure loader sees /usr/local/lib & CUDA libs at runtime
-# -----------------------------------------------------------------------------
+# ┌─────────────────────────────────────────────────────────────────────────────┐
+# │ Stage 2: Runtime image (slim, only what’s needed)                          │
+# └─────────────────────────────────────────────────────────────────────────────┘
+FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
+
+USER root
+
+# ── Copy FFmpeg binaries & libs from builder ─────────────────────────────────
+COPY --from=ffmpeg-builder /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
+COPY --from=ffmpeg-builder /usr/local/bin/ffprobe /usr/local/bin/ffprobe
+COPY --from=ffmpeg-builder /usr/local/lib /usr/local/lib
+
+# ── Register custom library paths ─────────────────────────────────────────────
 RUN echo "/usr/local/lib"        > /etc/ld.so.conf.d/ffmpeg.conf \
  && echo "/usr/local/cuda/lib64" > /etc/ld.so.conf.d/cuda.conf \
  && ldconfig
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64
 
-# -----------------------------------------------------------------------------
-#  6) Python & Whisper setup
-#   a) Upgrade pip, setuptools, wheel
-#   b) Install PyTorch cu118
-#   c) Install openai-whisper
-#   d) Pre-download 'base' model & chown to node
-# -----------------------------------------------------------------------------
-RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
+# ── Install runtime deps: Python, small audio runtimes, tzdata for consistency ─
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      tzdata \
+      libasound2 libsndio7.0 \
+      python3-full python3-dev python3-pip python3-venv \
+      ca-certificates curl gnupg2 dirmngr \
+ && rm -rf /var/lib/apt/lists/*
 
+# ── Install Node.js 20 ────────────────────────────────────────────────────────
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && apt-get update && apt-get install -y --no-install-recommends nodejs \
+ && rm -rf /var/lib/apt/lists/*
+
+# ── Create unprivileged node user ─────────────────────────────────────────────
+RUN groupadd -r node \
+ && useradd -r -g node -d /home/node -s /bin/bash -c "n8n user" node \
+ && mkdir -p /home/node \
+ && chown -R node:node /home/node
+
+# ── Python & Whisper setup ───────────────────────────────────────────────────
+RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
 RUN python3 -m pip install --no-cache-dir \
       torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-
 RUN python3 -m pip install --no-cache-dir openai-whisper
 
+# Pre-download the Whisper “base” model
 RUN mkdir -p /usr/local/lib/whisper_models \
  && python3 -c "import whisper; whisper.load_model('base', download_root='/usr/local/lib/whisper_models')" \
  && chown -R node:node /usr/local/lib/whisper_models
 
 ENV WHISPER_MODEL_PATH=/usr/local/lib/whisper_models
 
-# -----------------------------------------------------------------------------
-#  7) Install n8n globally
-# -----------------------------------------------------------------------------
+# ── Install n8n globally ─────────────────────────────────────────────────────
 RUN npm install -g n8n \
  && npm cache clean --force
 
-# -----------------------------------------------------------------------------
-#  8) Prepare QNAP /data mounts & permissions
-# -----------------------------------------------------------------------------
+# ── Prepare QNAP /data mounts & permissions ──────────────────────────────────
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R node:node /data /usr/local/lib/whisper_models /home/node \
  && chmod -R 777 /data /usr/local/lib/whisper_models /home/node
 
-# -----------------------------------------------------------------------------
-#  9) Switch to unprivileged 'node' user & expose port
-# -----------------------------------------------------------------------------
+# ── Final runtime user & port ────────────────────────────────────────────────
 USER node
 EXPOSE 5678
 
-# -----------------------------------------------------------------------------
-# 10) Default start command (CMD for easy overrides)
-# -----------------------------------------------------------------------------
+# ── Default command (CMD for easy overrides) ─────────────────────────────────
 CMD ["n8n", "start"]
