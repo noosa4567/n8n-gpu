@@ -2,7 +2,8 @@ FROM node:20-bookworm-slim
 
 USER root
 
-# 1) Enable Bookworm non-free repos & install build/runtime deps
+# 1) Enable non-free repos & install build/runtime deps
+#    Use libsndio6 (not libsndio7.0) to match FFmpeg's link to libsndio.so.6.1
 RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list \
  && echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list \
  && echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list \
@@ -13,7 +14,7 @@ RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-fr
       libvorbis-dev libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev \
       texinfo zlib1g-dev libx264-dev libx265-dev libnuma-dev libvpx-dev \
       libfdk-aac-dev libmp3lame-dev libopus-dev libdav1d-dev libunistring-dev \
-      libasound2-dev libsndio-dev libsndio7.0 \
+      libasound2-dev libsndio-dev libsndio6 \
       nvidia-cuda-toolkit \
       python3 python3-pip python3-venv ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
@@ -38,12 +39,12 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
  && cd .. && rm -rf ffmpeg \
  && ffmpeg -version
 
-# 4) Refresh loader cache for FFmpeg & CUDA libs
+# 4) Refresh loader cache for /usr/local/lib & CUDA paths
 RUN echo "/usr/local/lib"        > /etc/ld.so.conf.d/ffmpeg.conf \
  && echo "/usr/local/nvidia/lib" > /etc/ld.so.conf.d/nvidia.conf \
  && ldconfig
 
-# 5) Install PyTorch (cu118) & Whisper (with PEP668 override), pre-download model, fix perms
+# 5) Install PyTorch (cu118) & Whisper, pre-download model & fix perms
 RUN python3 -m pip install --break-system-packages --no-cache-dir --upgrade pip \
  && python3 -m pip install --break-system-packages --no-cache-dir \
       torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 \
@@ -52,16 +53,16 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir --upgrade pip 
  && python3 -c "from whisper import _download,_MODELS; _download(_MODELS['base'],'/usr/local/lib/whisper_models',in_memory=False)" \
  && chown -R node:node /usr/local/lib/whisper_models
 
-# 6) Install n8n globally
+# 6) Install n8n
 RUN npm install -g n8n \
  && npm cache clean --force
 
-# 7) Prepare QNAP mount points & permissions
+# 7) Prepare QNAP mounts & permissions
 RUN mkdir -p /data/shared/videos /data/shared/audio /data/shared/transcripts \
  && chown -R node:node /data /usr/local/lib/whisper_models /home/node \
  && chmod -R 777 /data /usr/local/lib/whisper_models /home/node
 
-# 8) Drop back to unprivileged user
+# 8) Drop to non-root user
 USER node
 
 # 9) Runtime env & port
@@ -69,5 +70,5 @@ ENV WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/nvidia/lib
 EXPOSE 5678
 
-# 10) Use CMD for n8n entry (easy override)
+# 10) Start n8n (via CMD for easy overrides)
 CMD ["n8n", "start"]
