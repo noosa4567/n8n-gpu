@@ -1,16 +1,19 @@
 # -----------------------------------------------------------------------------
-#  Base: CUDA 11.8 Devel on Ubuntu 22.04 (bundles CUDA runtimes & dev libs)
+#  Base: CUDA 11.8 Devel on Ubuntu 22.04 (bundles all CUDA runtimes + dev libs)
 # -----------------------------------------------------------------------------
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 
 # -----------------------------------------------------------------------------
-#  1) Configure non-interactive timezone + install build/runtime deps
+#  Prevent tzdata prompts
 # -----------------------------------------------------------------------------
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
-ENV DEBIAN_FRONTEND=${DEBIAN_FRONTEND}
 
 USER root
+
+# -----------------------------------------------------------------------------
+#  1) Install build & runtime deps (incl. tzdata, libsndio7.0, full Python)
+# -----------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
       tzdata \
       build-essential git pkg-config yasm nasm autoconf automake libtool \
@@ -24,22 +27,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
-#  2) Install Node.js 20 from NodeSource
+#  2) Install Node.js 20
 # -----------------------------------------------------------------------------
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
- && apt-get update \
- && apt-get install -y --no-install-recommends nodejs \
+ && apt-get update && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
-#  3) Build NVIDIA NVENC/NVDEC headers
+#  3) NVIDIA NVENC/NVDEC headers
 # -----------------------------------------------------------------------------
 RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git \
  && cd nv-codec-headers && make install \
  && cd .. && rm -rf nv-codec-headers
 
 # -----------------------------------------------------------------------------
-#  4) Clone, build & install FFmpeg (sndio + NVENC/NVDEC), verbose & verify
+#  4) Build & install FFmpeg (sndio + GPU accel), verbose & verify
 # -----------------------------------------------------------------------------
 RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
  && cd ffmpeg \
@@ -57,7 +59,7 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
  && ffmpeg -version
 
 # -----------------------------------------------------------------------------
-#  5) Ensure loader sees /usr/local/lib & CUDA libs at runtime
+#  5) Register custom lib paths at runtime
 # -----------------------------------------------------------------------------
 RUN echo "/usr/local/lib"        > /etc/ld.so.conf.d/ffmpeg.conf \
  && echo "/usr/local/cuda/lib64" > /etc/ld.so.conf.d/cuda.conf \
@@ -66,14 +68,21 @@ RUN echo "/usr/local/lib"        > /etc/ld.so.conf.d/ffmpeg.conf \
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64
 
 # -----------------------------------------------------------------------------
-#  6) Install PyTorch (cu118) & Whisper, pre-download model & fix perms
+#  6) Python & Whisper
+# 6a) Upgrade pip, setuptools, wheel
+# 6b) Install PyTorch cu118
+# 6c) Install openai-whisper
+# 6d) Pre-download base model via public API and chown
 # -----------------------------------------------------------------------------
-RUN python3 -m pip install --no-cache-dir --upgrade pip \
- && python3 -m pip install --no-cache-dir \
-      torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 \
- && python3 -m pip install --no-cache-dir openai-whisper \
- && mkdir -p /usr/local/lib/whisper_models \
- && python3 -c "from whisper import _download,_MODELS; _download(_MODELS['base'], '/usr/local/lib/whisper_models', in_memory=False)" \
+RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+RUN python3 -m pip install --no-cache-dir \
+      torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+RUN python3 -m pip install --no-cache-dir openai-whisper
+
+RUN mkdir -p /usr/local/lib/whisper_models \
+ && python3 -c "import whisper; whisper.load_model('base', download_root='/usr/local/lib/whisper_models')" \
  && chown -R node:node /usr/local/lib/whisper_models
 
 ENV WHISPER_MODEL_PATH=/usr/local/lib/whisper_models
@@ -85,14 +94,14 @@ RUN npm install -g n8n \
  && npm cache clean --force
 
 # -----------------------------------------------------------------------------
-#  8) Prepare QNAP Container Station mounts & permissions
+#  8) Prepare QNAP mounts & permissions
 # -----------------------------------------------------------------------------
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R node:node /data /usr/local/lib/whisper_models /home/node \
  && chmod -R 777 /data /usr/local/lib/whisper_models /home/node
 
 # -----------------------------------------------------------------------------
-#  9) Drop to unprivileged node user & expose port
+#  9) Switch to non-root user & expose port
 # -----------------------------------------------------------------------------
 USER node
 EXPOSE 5678
