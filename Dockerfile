@@ -1,35 +1,34 @@
-# 1) Base on CUDA 11.8 runtime + cuDNN 8 so we have libcudart, libnvrtc, etc.
-FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+FROM node:20-bookworm-slim
 
+# 1) Switch to root to install system dependencies
 USER root
 
-# 2) Install Node.js 20, build tools, FFmpeg deps, Python, runtime libs (incl. libsndio6)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    # basics
-    curl ca-certificates gnupg lsb-release \
-    # Node.js 20
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    # FFmpeg build & runtime deps
-    git pkg-config yasm nasm build-essential autoconf automake libtool \
-    libass-dev libfreetype6-dev libsdl2-dev libtheora-dev libva-dev \
-    libvdpau-dev libvorbis-dev libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev \
-    texinfo zlib1g-dev libx264-dev libx265-dev libnuma-dev libvpx-dev \
-    libfdk-aac-dev libmp3lame-dev libopus-dev libdav1d-dev libunistring-dev \
-    libasound2-dev libsndio6 \
-    # Python
-    python3 python3-pip python3-venv \
-    && rm -rf /var/lib/apt/lists/*
+# 2) Enable Debian non-free repos and pull in build/runtime packages
+RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list \
+ && echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list \
+ && echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+      # FFmpeg build deps
+      git pkg-config yasm nasm build-essential autoconf automake libtool libc6-dev \
+      libass-dev libfreetype6-dev libsdl2-dev libtheora-dev libva-dev libvdpau-dev \
+      libvorbis-dev libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev \
+      texinfo zlib1g-dev libx264-dev libx265-dev libnuma-dev libvpx-dev \
+      libfdk-aac-dev libmp3lame-dev libopus-dev libdav1d-dev libunistring-dev \
+      # audio output support
+      libasound2-dev libsndio-dev \
+      # NVIDIA user-space CUDA toolkit (for libnppig, libcudart, etc.)
+      nvidia-cuda-toolkit \
+      # Python + HTTPS support
+      python3 python3-pip python3-venv ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
 
-# 3) Make sure the CUDA libs are on the loader path
-RUN echo "/usr/local/cuda/lib64" > /etc/ld.so.conf.d/cuda.conf && ldconfig
-
-# 4) Build & install NVIDIA codec headers
+# 3) Install NVIDIA codec headers so FFmpeg can compile NVENC/NVDEC
 RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git \
  && cd nv-codec-headers && make install \
  && cd .. && rm -rf nv-codec-headers
 
-# 5) Build & install FFmpeg (NVENC/NVDEC + all your libs)
+# 4) Build & install FFmpeg (with sndio + NVENC/NVDEC)
 RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
  && cd ffmpeg \
  && ./configure --prefix=/usr/local \
@@ -37,33 +36,37 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
       --enable-libass --enable-libfdk-aac --enable-libfreetype \
       --enable-libmp3lame --enable-libopus --enable-libvorbis \
       --enable-libvpx --enable-libx264 --enable-libx265 \
-      --enable-alsa --disable-sndio \
+      --enable-alsa --enable-sndio \        # now includes sndio support
       --enable-nvenc --enable-nvdec --enable-cuvid \
  && make -j"$(nproc)" \
  && make install \
- && cd .. && rm -rf ffmpeg \
- && ldconfig
+ && cd .. && rm -rf ffmpeg
 
-# 6) Install Python ML libs & Whisper
+# 5) Refresh linker cache so /usr/local/lib and CUDA libs are found
+RUN ldconfig
+
+# 6) Install PyTorch (cu118) and Whisper, then pre-download the "base" model
 RUN python3 -m pip install --no-cache-dir --upgrade pip \
  && python3 -m pip install --no-cache-dir \
       torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 \
- && python3 -m pip install --no-cache-dir openai-whisper
+ && python3 -m pip install --no-cache-dir openai-whisper \
+ && mkdir -p /usr/local/lib/whisper_models \
+ && python3 -c "from whisper import _download,_MODELS; \
+       _download(_MODELS['base'], '/usr/local/lib/whisper_models', in_memory=False)"
 
-# 7) Pre-download the Whisper base model
-RUN mkdir -p /usr/local/lib/whisper_models \
- && python3 -c "from whisper import _download,_MODELS; _download(_MODELS['base'], '/usr/local/lib/whisper_models', in_memory=False)"
+# 7) Install n8n globally
+RUN npm install -g n8n \
+ && npm cache clean --force
 
-# 8) Install n8n globally
-RUN npm install -g n8n && npm cache clean --force
+# 8) Prepare QNAP Container Station volumes & permissions
+RUN mkdir -p /data/shared/videos /data/shared/audio /data/shared/transcripts /usr/local/lib/whisper_models \
+ && chown -R node:node /data /usr/local/lib/whisper_models /home/node \
+ && chmod -R 777  /data /usr/local/lib/whisper_models /home/node
 
-# 9) Create an unprivileged user, fix permissions
-RUN useradd --create-home --shell /bin/bash n8n \
- && chown -R n8n:n8n /usr/local/lib/whisper_models
+# 9) Drop privileges back to the `node` user
+USER node
 
-USER n8n
-
+# 10) Final runtime settings
 EXPOSE 5678
 ENV WHISPER_MODEL_PATH=/usr/local/lib/whisper_models
-
-ENTRYPOINT ["n8n","start"]
+ENTRYPOINT ["n8n", "start"]
