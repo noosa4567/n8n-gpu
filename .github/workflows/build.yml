@@ -1,15 +1,13 @@
 name: Build and Push n8n GPU Image
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: '0 0 * * *'
+  workflow_dispatch:  # Manual trigger for now, can add schedule later if needed
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Changed from 'read' to 'write'
+      contents: write
       packages: write
     steps:
       - uses: actions/checkout@v4
@@ -17,27 +15,29 @@ jobs:
         uses: docker/setup-buildx-action@v3
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
-      - name: Check n8n Version
+      - name: Check n8n Version and Force Build
         id: check_version
         run: |
           LATEST_DIGEST=$(docker manifest inspect docker.n8n.io/n8nio/n8n:latest | jq -r '.manifests[0].digest')
-          echo "Latest digest: $LATEST_DIGEST"
+          echo "Latest n8n digest: $LATEST_DIGEST"
           echo "LAST_DIGEST=$(cat last_digest.txt 2>/dev/null || echo '')" >> $GITHUB_ENV
           if [ "$LAST_DIGEST" != "$LATEST_DIGEST" ]; then
-            echo "Version changed, building new image"
+            echo "New n8n version detected, forcing n8n-gpu build"
             echo "LAST_DIGEST=$LATEST_DIGEST" > last_digest.txt
             echo "BUILD=true" >> $GITHUB_ENV
+            # Invalidate cache by touching a build marker
+            date > build_marker.txt
           else
-            echo "No version change, skipping build"
+            echo "No new n8n version, skipping build"
             echo "BUILD=false" >> $GITHUB_ENV
           fi
-      - name: Commit Last Digest (if changed)
+      - name: Commit Last Digest and Marker
         if: env.BUILD == 'true'
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add last_digest.txt
-          git commit -m "Update last digest" || echo "No changes to commit"
+          git add last_digest.txt build_marker.txt
+          git commit -m "Update n8n digest and build marker" || echo "No changes to commit"
           git push
       - name: Login to GHCR
         if: env.BUILD == 'true'
@@ -53,3 +53,7 @@ jobs:
           context: .
           push: true
           tags: ghcr.io/noosa4567/n8n-gpu:latest
+          cache-from: type=registry,ref=ghcr.io/noosa4567/n8n-gpu:latest
+          cache-to: type=inline
+          # Force a new layer to ensure a new digest
+          build-args: BUILD_TIMESTAMP=$(date +%s)
