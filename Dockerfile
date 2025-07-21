@@ -63,4 +63,4 @@ RUN mkdir -p /data/shared/{videos,audio,transcripts} \
 USER node
 
 ENTRYPOINT ["tini","--"]
-CMD ["n8n","start"]
+CMD ["n8n"]
