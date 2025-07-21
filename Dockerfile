@@ -36,8 +36,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && npm install -g n8n \
  && rm -rf /var/lib/apt/lists/*
 
-# 4) Install Whisper (no PyTorch wheels needed) and pre-download model
-RUN pip3 install --no-cache-dir --no-deps openai-whisper \
+# 4) Install Whisper (with deps) and pre-download model
+RUN pip3 install --no-cache-dir openai-whisper \
  && mkdir -p /usr/local/lib/whisper_models \
  && echo "📥 Pre-downloading Whisper base model…" \
  && python3 - << 'PYTHON'
