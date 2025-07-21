@@ -23,7 +23,7 @@ RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git \
  && cd nv-codec-headers && make install \
  && cd .. && rm -rf nv-codec-headers
 
-# Clone & build FFmpeg with GPU, sndio, VAAPI, Whisper-friendly
+# Clone & build FFmpeg
 RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
  && cd ffmpeg \
  && echo "🔧 Configuring FFmpeg…" \
@@ -44,44 +44,43 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
  && ffmpeg -codecs \
  && ffmpeg -encoders \
  && ffmpeg -decoders \
- && LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib \
-    ldd /usr/local/bin/ffmpeg | grep -q "not found" \
+ && LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64 ldd /usr/local/bin/ffmpeg | grep -q "not found" \
     && (echo "⚠️ Unresolved FFmpeg libraries" >&2 && exit 1) \
     || echo "✅ FFmpeg libs OK" \
  && cd .. && rm -rf ffmpeg
 
 # ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ Stage 2: Runtime (extends official n8n image)                              │
+# │ Stage 2: Runtime with n8n, Whisper, and FFmpeg                              │
 # └─────────────────────────────────────────────────────────────────────────────┘
-FROM n8nio/n8n:latest
+FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Australia/Brisbane \
-    LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib
+    LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64
 
 USER root
 
-# Timezone
+# Timezone setup
 RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
  && ln -fs /usr/share/zoneinfo/Australia/Brisbane /etc/localtime \
  && dpkg-reconfigure --frontend noninteractive tzdata \
  && rm -rf /var/lib/apt/lists/*
 
-# Runtime libs for audio, VAAPI, CUDA, Python
+# Runtime libraries
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libsndio7.0 libasound2 \
       libva2 libva-x11-2 libva-drm2 libva-wayland2 libvdpau1 \
       python3-minimal python3-pip ca-certificates curl gnupg2 dirmngr \
  && rm -rf /var/lib/apt/lists/*
 
-# Copy FFmpeg built artifacts
+# Copy FFmpeg artifacts
 COPY --from=ffmpeg-builder /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg-builder /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg-builder /usr/local/lib/      /usr/local/lib/
 
 # Python tooling & Whisper
 RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel \
- && python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 \
+ && python3 -m pip install --no-install-recommends torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 \
  && python3 -m pip install --no-cache-dir openai-whisper
 
 # Pre-download Whisper base model
@@ -93,8 +92,12 @@ RUN mkdir -p /usr/local/lib/whisper_models \
 
 ENV WHISPER_MODEL_PATH=/usr/local/lib/whisper_models
 
-# n8n CLI
-RUN npm install -g n8n
+# Install Node.js 20 & n8n
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && apt-get update && apt-get install -y --no-install-recommends nodejs \
+ && npm install -g n8n \
+ && npm cache clean --force \
+ && rm -rf /var/lib/apt/lists/*
 
 # Prepare data mounts & permissions
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
@@ -104,5 +107,4 @@ RUN mkdir -p /data/shared/{videos,audio,transcripts} \
 USER node
 
 EXPOSE 5678
-ENTRYPOINT ["tini","--","/docker-entrypoint.sh"]
-CMD ["n8n","start"]
+CMD ["n8n", "start"]
