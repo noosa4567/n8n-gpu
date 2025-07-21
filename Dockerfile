@@ -10,11 +10,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       tzdata \
       build-essential git pkg-config yasm nasm autoconf automake libtool \
       libfreetype6-dev libass-dev libtheora-dev \
-      libva-dev libva2 libvdpau-dev \
+      libva-dev libva2 libva-x11-dev libvdpau-dev libvdpau1 \
       libvorbis-dev libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev \
       zlib1g-dev texinfo libx264-dev libx265-dev libnuma-dev libvpx-dev \
       libfdk-aac-dev libmp3lame-dev libopus-dev libdav1d-dev libunistring-dev \
       libasound2-dev libsndio-dev libsndio7.0 \
+      nvidia-cuda-toolkit \
  && rm -rf /var/lib/apt/lists/*
 
 # NVENC/NVDEC headers
@@ -25,20 +26,28 @@ RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git \
 # Build & install FFmpeg
 RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
  && cd ffmpeg \
+ \
+ # dump all configure options for debugging
+ && ./configure --help \
+ \
+ # now configure with the flags we want
  && ./configure --prefix=/usr/local \
       --enable-gpl --enable-nonfree \
       --enable-libass --enable-libfdk-aac --enable-libfreetype \
       --enable-libmp3lame --enable-libopus --enable-libvorbis \
       --enable-libvpx --enable-libx264 --enable-libx265 \
-      --enable-libtheora --enable-vaapi --enable-libvdpau --enable-libnuma \
+      --enable-libtheora --enable-vaapi --enable-vdpau --enable-libnuma \
       --enable-libdav1d \
       --enable-alsa --enable-sndio \
       --enable-nvenc --enable-nvdec --enable-cuvid \
       V=1 \
+ \
  && make -j"$(nproc)" V=1 \
  && make install V=1 \
  && cd .. && rm -rf ffmpeg \
  && ldconfig \
+ \
+ # sanity-check
  && ffmpeg -version && ffmpeg -codecs
 
 # ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -48,17 +57,17 @@ FROM n8nio/n8n:latest
 
 USER root
 
-# Copy FFmpeg from builder
+# Copy FFmpeg runtime artifacts
 COPY --from=ffmpeg-builder /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg-builder /usr/local/bin/ffprobe /usr/local/bin/
-COPY --from=ffmpeg-builder /usr/local/lib/      /usr/local/lib/
+COPY --from=ffmpeg-builder /usr/local/lib       /usr/local/lib/
 
-# Ensure CUDA & FFmpeg libs are found at runtime
+# Ensure runtime libs are found
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib
 
 # Install minimal runtime deps + sndio7.0 + VAAPI runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      tzdata libsndio7.0 libasound2 libva2 \
+      tzdata libsndio7.0 libasound2 libva2 libva-x11-2 libvdpau1 \
       python3-minimal python3-pip \
       ca-certificates curl gnupg2 dirmngr \
  && rm -rf /var/lib/apt/lists/*
@@ -77,14 +86,13 @@ RUN mkdir -p /usr/local/lib/whisper_models \
 
 ENV WHISPER_MODEL_PATH=/usr/local/lib/whisper_models
 
-# Prepare QNAP /data mounts & permissions
+# Prepare /data mounts & permissions
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R node:node /data /usr/local/lib/whisper_models /home/node \
- && chmod -R 777   /data /usr/local/lib/whisper_models /home/node
+ && chmod -R 777 /data /usr/local/lib/whisper_models /home/node
 
-# Switch back to n8n user, expose port, and set entrypoint/command
+# Switch back to n8n user, expose port, and run
 USER node
 EXPOSE 5678
-
-ENTRYPOINT ["tini", "--", "/docker-entrypoint.sh"]
-CMD        ["n8n", "start"]
+ENTRYPOINT ["tini","--","/docker-entrypoint.sh"]
+CMD        ["n8n","start"]
