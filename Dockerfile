@@ -70,4 +70,4 @@ RUN mkdir -p /data/shared/{videos,audio,transcripts} \
 USER node
 EXPOSE 5678
 ENTRYPOINT ["tini","--","/docker-entrypoint.sh"]
-CMD ["n8n"]
+CMD ["start"]
