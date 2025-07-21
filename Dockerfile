@@ -13,7 +13,7 @@ ENV TZ=Australia/Brisbane \
     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models
 
-# 1) Create non-root "node" user and ensure n8n config dir exists
+# 1) Create non-root "node" user and ensure config dir exists
 RUN groupadd -r node \
  && useradd -r -g node -m -d /home/node -s /bin/bash node \
  && mkdir -p /home/node/.n8n \
@@ -30,7 +30,7 @@ RUN apt-get update \
       curl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-# 3) Bring in GPU-enabled FFmpeg
+# 3) Copy GPU-enabled FFmpeg
 COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
@@ -42,31 +42,34 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && npm install -g n8n \
  && rm -rf /var/lib/apt/lists/*
 
-# 5) Copy n8n’s official entrypoint so we preserve its init logic
+# 5) Bring in n8n’s official entrypoint so we keep its init logic
 COPY --from=n8nio/n8n:latest /docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
-# 6) Install Whisper + tokenizer and pre-download the base model
+# 6) Install Whisper + tiktoken
 RUN pip3 install --no-cache-dir tiktoken openai-whisper
 
+# 7) Pre-download the Whisper “base” model
 RUN mkdir -p $WHISPER_MODEL_PATH
 RUN python3 << 'PYCODE'
 import whisper
-whisper.load_model('base', download_root='$WHISPER_MODEL_PATH')
+whisper.load_model('base', download_root='/usr/local/lib/whisper_models')
 PYCODE
+
+# 8) Fix ownership on the model files
 RUN chown -R node:node $WHISPER_MODEL_PATH
 
-# 7) Verify FFmpeg linkage to catch missing libs early
+# 9) Verify FFmpeg linkage
 RUN ldd /usr/local/bin/ffmpeg \
-  | grep -q "not found" \
-    && (echo "⚠️ Unresolved FFmpeg libraries" >&2 && exit 1) \
-    || echo "✅ FFmpeg libs OK"
+    | grep -q "not found" \
+      && (echo "⚠️ Unresolved FFmpeg libraries" >&2 && exit 1) \
+      || echo "✅ FFmpeg libs OK"
 
-# 8) Prepare shared data dirs
+# 10) Prepare shared data dirs
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chmod -R 777 /data/shared
 
-# 9) Switch to non-root user and launch via n8n’s entrypoint
+# 11) Switch to non-root and launch via the official entrypoint
 USER node
 ENTRYPOINT ["tini","--","/docker-entrypoint.sh"]
-CMD ["n8n","start"]
+CMD ["start"]
