@@ -1,5 +1,5 @@
 ###############################################################################
-# Stage 1 – build FFmpeg (VAAPI + NVENC/NVDEC + sndio)
+# Stage 1 – build FFmpeg with VAAPI, NVENC/NVDEC, sndio, etc.
 ###############################################################################
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS ffmpeg-builder
 
@@ -21,40 +21,40 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git && \
     cd nv-codec-headers && make install && cd .. && rm -rf nv-codec-headers
 
-# Build & install FFmpeg
+# Clone, configure, build and install FFmpeg
 RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg && \
     cd ffmpeg && \
-    ./configure --help && \
     ./configure --prefix=/usr/local \
-        --enable-gpl --enable-nonfree \
-        --enable-libass --enable-libfdk-aac --enable-libfreetype \
-        --enable-libmp3lame --enable-libopus --enable-libvorbis \
-        --enable-libvpx --enable-libx264 --enable-libx265 \
-        --enable-libtheora --enable-vaapi --enable-libvdpau --enable-libnuma \
-        --enable-libdav1d \
-        --enable-alsa   --enable-sndio \
-        --enable-nvenc  --enable-nvdec --enable-cuvid && \
-    make -j"$(nproc)" V=1 && make install V=1 && \
-    cd .. && rm -rf ffmpeg && ldconfig && \
-    # verify build: fail if any "not found"
-    ldd /usr/local/bin/ffmpeg | grep -q "not found" && (echo "⚠️ Unresolved FFmpeg libs" >&2 && exit 1) || echo "ldd OK"
+      --enable-gpl --enable-nonfree \
+      --enable-libass --enable-libfdk-aac --enable-libfreetype \
+      --enable-libmp3lame --enable-libopus --enable-libvorbis \
+      --enable-libvpx --enable-libx264 --enable-libx265 \
+      --enable-libtheora --enable-vaapi --enable-libnuma \
+      --enable-libdav1d \
+      --enable-alsa --enable-sndio \
+      --enable-nvenc --enable-nvdec --enable-cuvid && \
+    make -j"$(nproc)" V=1 && make install V=1 && ldconfig && \
+    cd .. && rm -rf ffmpeg && \
+    # verify no missing shared libs
+    ldd /usr/local/bin/ffmpeg | grep -q "not found" && \
+      (echo "⚠️ Unresolved FFmpeg libraries" >&2 && exit 1) || echo "✅ FFmpeg libs OK"
 
 ###############################################################################
-# Stage 2 – runtime (extends official n8n)
+# Stage 2 – runtime (based on official n8n image)
 ###############################################################################
 FROM n8nio/n8n:latest
 
 USER root
 
-# Copy FFmpeg bits
+# Copy FFmpeg + ffprobe + libs
 COPY --from=ffmpeg-builder /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg-builder /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg-builder /usr/local/lib/        /usr/local/lib/
 
-# ensure libraries are found
+# Make sure these are found at runtime
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib
 
-# runtime deps (audio, VA-API, Python)
+# Runtime deps (audio, VAAPI, Python)
 RUN apt-get update && apt-get install -y --no-install-recommends \
       tzdata libsndio7.0 libasound2 \
       libva2 libva-x11-2 libva-drm2 libva-wayland2 libvdpau1 \
@@ -62,12 +62,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl gnupg2 dirmngr && \
     rm -rf /var/lib/apt/lists/*
 
-# Python tooling & Whisper
+# Python + Whisper
 RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    python3 -m pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
+    python3 -m pip install --no-cache-dir \
+      torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
     python3 -m pip install --no-cache-dir openai-whisper
 
-# Pre-download and verify Whisper base model
+# Pre-download and verify the Whisper “base” model
 RUN mkdir -p /usr/local/lib/whisper_models && \
     python3 -c "import whisper; whisper.load_model('base', download_root='/usr/local/lib/whisper_models')" && \
     ls -l /usr/local/lib/whisper_models/base.pt || echo "⚠️ Whisper model missing" && \
@@ -75,13 +76,16 @@ RUN mkdir -p /usr/local/lib/whisper_models && \
 
 ENV WHISPER_MODEL_PATH=/usr/local/lib/whisper_models
 
-# QNAP-friendly writable mounts
+# Make /data writable for QNAP Container Station volumes
 RUN mkdir -p /data/shared/{videos,audio,transcripts} && \
     chown -R node:node /data /usr/local/lib/whisper_models /home/node && \
     chmod -R 777       /data /usr/local/lib/whisper_models /home/node
 
+# Switch back to unprivileged user
 USER node
+
 EXPOSE 5678
 
+# Use tini + official n8n entrypoint, with CMD for “start”
 ENTRYPOINT ["tini","--","/docker-entrypoint.sh"]
-CMD ["n8n","start"]
+CMD        ["n8n","start"]
