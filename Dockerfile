@@ -1,3 +1,4 @@
+```dockerfile
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ 1) Build FFmpeg with NVIDIA GPU support                                    │
 # └─────────────────────────────────────────────────────────────────────────────┘
@@ -39,34 +40,38 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
       || echo "✅ FFmpeg OK" \
  && cd .. && rm -rf ffmpeg
 
+
 # ┌─────────────────────────────────────────────────────────────────────────────┐
 # │ 2) Runtime: n8n + Whisper + FFmpeg                                          │
 # └─────────────────────────────────────────────────────────────────────────────┘
-FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
+FROM pytorch/pytorch:2.7.1-cuda11.8-cudnn8-runtime
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Australia/Brisbane \
     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib
 
-# Basic runtimes, timezone & Torch via apt
+# Basic runtimes, timezone, Node.js & cleans
 RUN apt-get update && apt-get install -y --no-install-recommends \
       tzdata curl gnupg2 dirmngr ca-certificates \
-      python3 python3-pip python3-pytorch-cuda \
       libsndio7.0 libasound2 libva2 libva-x11-2 libva-drm2 libva-wayland2 libvdpau1 \
+      tini \
  && ln -fs /usr/share/zoneinfo/Australia/Brisbane /etc/localtime \
  && dpkg-reconfigure --frontend noninteractive tzdata \
- && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
-
-# Node.js 20
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
 
-# Whisper (skip Torch deps)
+# n8n
+RUN npm install -g n8n && npm cache clean --force
+
+# Whisper (skip torch dep install)
 RUN pip3 install --no-cache-dir --no-deps openai-whisper
 
-# Pre-download Whisper base model
+# Pre-download Whisper model
 RUN mkdir -p /usr/local/lib/whisper_models \
- && python3 -c "import whisper; whisper.load_model('base', download_root='/usr/local/lib/whisper_models')" \
+ && python3 - <<PYTHON
+import whisper
+whisper.load_model('base', download_root='/usr/local/lib/whisper_models')
+PYTHON
  && ls -l /usr/local/lib/whisper_models/base.pt \
  && chown -R 1000:1000 /usr/local/lib/whisper_models
 
@@ -77,18 +82,15 @@ COPY --from=ffmpeg-builder /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg-builder /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg-builder /usr/local/lib/      /usr/local/lib/
 
-# Install n8n
-RUN npm install -g --no‐cache n8n \
- && npm cache clean --force
-
-# Data dirs
+# Prepare data dirs
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R 1000:1000 /data \
  && chmod -R 777 /data
 
-# Drop to unprivileged
+# Unprivileged run
 USER node
 
 EXPOSE 5678
 ENTRYPOINT ["tini","--","/docker-entrypoint.sh"]
 CMD ["n8n","start"]
+```
