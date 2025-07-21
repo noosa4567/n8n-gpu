@@ -1,4 +1,4 @@
-# 1) Build FFmpeg with NVENC/NVDEC + all codecs we need
+# 1) Build FFmpeg with NVIDIA GPU support
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS ffmpeg-builder
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
@@ -12,7 +12,7 @@ RUN apt-get update \
        nvidia-cuda-toolkit \
   && rm -rf /var/lib/apt/lists/*
 
-# Install NVIDIA codec headers
+# NVIDIA codec headers
 RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git \
   && cd nv-codec-headers && make install \
   && cd .. && rm -rf nv-codec-headers
@@ -32,19 +32,19 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
   && make -j"$(nproc)" \
   && make install \
   && ldconfig \
-  && echo "🔍 Verifying FFmpeg libs…" \
+  && echo "🔍 Verifying FFmpeg…" \
   && LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64 ldd /usr/local/bin/ffmpeg | grep -q "not found" \
        && (echo "⚠️ Unresolved FFmpeg libs" >&2 && exit 1) || echo "✅ FFmpeg OK" \
   && cd .. \
   && rm -rf ffmpeg
 
-# 2) Runtime: PyTorch GPU image + n8n + Whisper
+# 2) Runtime: PyTorch + n8n + Whisper
 FROM pytorch/pytorch:2.1.2-cuda11.8-cudnn8-runtime
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Australia/Brisbane \
     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib
 
-# Install tini, GPU runtimes, Node.js, n8n
+# Minimal runtime deps + Node.js + n8n
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
        tini \
@@ -54,17 +54,16 @@ RUN apt-get update \
        curl gnupg2 dirmngr ca-certificates \
   && ln -fs /usr/share/zoneinfo/Australia/Brisbane /etc/localtime \
   && dpkg-reconfigure --frontend noninteractive tzdata \
-  # Node.js 20
   && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
   && apt-get install -y --no-install-recommends nodejs \
   && npm install -g n8n \
   && rm -rf /var/lib/apt/lists/*
 
-# Create the 'node' user (UID 1000) so USER node works
+# Create node user (UID 1000) so USER node works
 RUN groupadd -g 1000 node \
   && useradd --no-log-init -u 1000 -g node -m -d /home/node node
 
-# Install Whisper (no deps) and pre-download base model
+# Install Whisper & pre-download model
 RUN pip3 install --no-cache-dir --no-deps openai-whisper \
   && mkdir -p /usr/local/lib/whisper_models \
   && echo "📥 Pre-downloading Whisper base model…" \
@@ -72,21 +71,22 @@ RUN pip3 install --no-cache-dir --no-deps openai-whisper \
 import whisper
 whisper.load_model("base", download_root="/usr/local/lib/whisper_models")
 PYTHON
-  && ls -l /usr/local/lib/whisper_models/base.pt \
+
+# Verify model file exists
+RUN ls -l /usr/local/lib/whisper_models/base.pt \
      || (echo "⚠️ Whisper model missing!" >&2 && exit 1)
 
 ENV WHISPER_MODEL_PATH=/usr/local/lib/whisper_models
 
-# Copy in our FFmpeg bits from the builder stage
+# Copy in FFmpeg from builder
 COPY --from=ffmpeg-builder /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg-builder /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg-builder /usr/local/lib/        /usr/local/lib/
 
-# Prepare data directories
+# Prepare data dirs
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
   && chmod -R 777 /data/shared
 
-# Switch to node user and run n8n
 USER node
 EXPOSE 5678
 ENTRYPOINT ["tini","--","n8n"]
