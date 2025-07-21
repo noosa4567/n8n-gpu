@@ -6,7 +6,6 @@ FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS ffmpeg-builder
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
 
-# Build deps + sndio runtime headers
 RUN apt-get update && apt-get install -y --no-install-recommends \
       tzdata build-essential git pkg-config yasm nasm autoconf automake libtool \
       libsndio-dev libsndio7.0 libasound2-dev \
@@ -21,7 +20,7 @@ RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git \
  && cd nv-codec-headers && make install \
  && cd .. && rm -rf nv-codec-headers
 
-# Build FFmpeg
+# Build & install FFmpeg
 RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
  && cd ffmpeg \
  && ./configure --prefix=/usr/local \
@@ -37,69 +36,50 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
  && ldconfig
 
 # ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ Stage 2: Runtime image                                                      │
+# │ Stage 2: Extend the official n8n image                                      │
 # └─────────────────────────────────────────────────────────────────────────────┘
-FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
-
-ARG DEBIAN_FRONTEND=noninteractive
-ENV TZ=Etc/UTC
-ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64
+FROM n8nio/n8n:latest
 
 USER root
 
-# ── Copy only FFmpeg binaries & libs ─────────────────────────────────────────
-COPY --from=ffmpeg-builder /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
+# ── Copy FFmpeg binaries & libs into the runtime ─────────────────────────────
+COPY --from=ffmpeg-builder /usr/local/bin/ffmpeg  /usr/local/bin/ffmpeg
 COPY --from=ffmpeg-builder /usr/local/bin/ffprobe /usr/local/bin/ffprobe
-COPY --from=ffmpeg-builder /usr/local/lib/ /usr/local/lib/
+COPY --from=ffmpeg-builder /usr/local/lib/     /usr/local/lib/
 
-# ── Register loader paths ────────────────────────────────────────────────────
+# ── Register custom loader paths & refresh cache ──────────────────────────────
 RUN echo "/usr/local/lib"        > /etc/ld.so.conf.d/ffmpeg.conf \
  && echo "/usr/local/cuda/lib64" > /etc/ld.so.conf.d/cuda.conf \
  && ldconfig
 
-# ── Install minimal runtime deps + tzdata ────────────────────────────────────
+# ── Install minimal Python & audio runtimes ───────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      tzdata libsndio7.0 libasound2 \
-      python3-full python3-pip python3-venv ca-certificates curl gnupg2 dirmngr \
+      libsndio7.0 libasound2 \
+      python3-minimal python3-pip \
  && rm -rf /var/lib/apt/lists/*
 
-# ── Install Node.js 20 ───────────────────────────────────────────────────────
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
- && apt-get update && apt-get install -y --no-install-recommends nodejs \
- && rm -rf /var/lib/apt/lists/*
-
-# ── Create unprivileged 'node' user ──────────────────────────────────────────
-RUN groupadd -r node \
- && useradd  -r -g node -d /home/node -s /bin/bash -c "n8n user" node \
- && mkdir -p /home/node \
- && chown -R node:node /home/node
-
-# ── Python & Whisper setup ───────────────────────────────────────────────────
-RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
-RUN python3 -m pip install --no-cache-dir \
-      torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-RUN python3 -m pip install --no-cache-dir openai-whisper
-
-# Pre-download Whisper "base" model
-RUN mkdir -p /usr/local/lib/whisper_models \
+# ── Install PyTorch (cu118) & Whisper, then pre-download model ───────────────
+RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel \
+ && python3 -m pip install --no-cache-dir \
+      torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 \
+ && python3 -m pip install --no-cache-dir openai-whisper \
+ && mkdir -p /usr/local/lib/whisper_models \
  && python3 -c "import whisper; whisper.load_model('base', download_root='/usr/local/lib/whisper_models')" \
  && chown -R node:node /usr/local/lib/whisper_models
 
 ENV WHISPER_MODEL_PATH=/usr/local/lib/whisper_models
 
-# ── Install n8n globally ─────────────────────────────────────────────────────
-RUN npm install -g n8n \
- && npm cache clean --force
-
-# ── Prepare /data mounts & permissions ───────────────────────────────────────
+# ── Prepare /data mounts & permissions ────────────────────────────────────────
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R node:node /data /usr/local/lib/whisper_models /home/node \
- && chmod -R 777 /data /usr/local/lib/whisper_models /home/node
+ && chmod -R 777   /data /usr/local/lib/whisper_models /home/node
 
-# ── Switch to 'node' & expose port ──────────────────────────────────────────
+# ── Switch back to the official `node` user & expose the port ────────────────
 USER node
 EXPOSE 5678
 
-# ── Ensure n8n is run directly, bypassing NVIDIA entrypoint ─────────────────
-ENTRYPOINT ["n8n"]
-CMD        ["start"]
+# ── **No** CMD or ENTRYPOINT override here — we inherit the official  
+#    `tini -- /docker-entrypoint.sh` and it will do:
+#      1) print the NVIDIA license banner  
+#      2) auto-generate the key in /home/node/.n8n/config  
+#      3) exec `n8n` (with no args) to start the server  
