@@ -7,7 +7,8 @@ ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      tzdata build-essential git pkg-config yasm nasm autoconf automake libtool \
+      tzdata \
+      build-essential git pkg-config yasm nasm autoconf automake libtool \
       libsndio-dev libsndio7.0 libasound2-dev \
       libfreetype6-dev libass-dev libtheora-dev libva-dev libvdpau-dev \
       libvorbis-dev libxcb1-dev libxcb-shm0-dev libxcb-xfixes0-dev \
@@ -36,50 +37,53 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git ffmpeg \
  && ldconfig
 
 # ┌─────────────────────────────────────────────────────────────────────────────┐
-# │ Stage 2: Extend the official n8n image                                      │
+# │ Stage 2: Runtime image (extends official n8n)                              │
 # └─────────────────────────────────────────────────────────────────────────────┘
 FROM n8nio/n8n:latest
 
 USER root
 
-# ── Copy FFmpeg binaries & libs into the runtime ─────────────────────────────
+# Copy only the FFmpeg binaries & shared libs
 COPY --from=ffmpeg-builder /usr/local/bin/ffmpeg  /usr/local/bin/ffmpeg
 COPY --from=ffmpeg-builder /usr/local/bin/ffprobe /usr/local/bin/ffprobe
 COPY --from=ffmpeg-builder /usr/local/lib/     /usr/local/lib/
 
-# ── Register custom loader paths & refresh cache ──────────────────────────────
-RUN echo "/usr/local/lib"        > /etc/ld.so.conf.d/ffmpeg.conf \
+# Ensure loader paths exist & register them
+RUN mkdir -p /etc/ld.so.conf.d \
+ && echo "/usr/local/lib"        > /etc/ld.so.conf.d/ffmpeg.conf \
  && echo "/usr/local/cuda/lib64" > /etc/ld.so.conf.d/cuda.conf \
  && ldconfig
 
-# ── Install minimal Python & audio runtimes ───────────────────────────────────
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64
+
+# Install minimal runtime deps + tzdata
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      libsndio7.0 libasound2 \
+      tzdata libsndio7.0 libasound2 \
       python3-minimal python3-pip \
+      ca-certificates curl gnupg2 dirmngr \
  && rm -rf /var/lib/apt/lists/*
 
-# ── Install PyTorch (cu118) & Whisper, then pre-download model ───────────────
+# Install PyTorch cu118 + Whisper
 RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel \
  && python3 -m pip install --no-cache-dir \
       torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 \
- && python3 -m pip install --no-cache-dir openai-whisper \
- && mkdir -p /usr/local/lib/whisper_models \
+ && python3 -m pip install --no-cache-dir openai-whisper
+
+# Pre-download the Whisper “base” model
+RUN mkdir -p /usr/local/lib/whisper_models \
  && python3 -c "import whisper; whisper.load_model('base', download_root='/usr/local/lib/whisper_models')" \
  && chown -R node:node /usr/local/lib/whisper_models
 
 ENV WHISPER_MODEL_PATH=/usr/local/lib/whisper_models
 
-# ── Prepare /data mounts & permissions ────────────────────────────────────────
+# Prepare /data mounts & permissions
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R node:node /data /usr/local/lib/whisper_models /home/node \
  && chmod -R 777   /data /usr/local/lib/whisper_models /home/node
 
-# ── Switch back to the official `node` user & expose the port ────────────────
+# Switch back to the n8n user
 USER node
-EXPOSE 5678
 
-# ── **No** CMD or ENTRYPOINT override here — we inherit the official  
-#    `tini -- /docker-entrypoint.sh` and it will do:
-#      1) print the NVIDIA license banner  
-#      2) auto-generate the key in /home/node/.n8n/config  
-#      3) exec `n8n` (with no args) to start the server  
+# Expose port and rely on the official n8n entrypoint
+EXPOSE 5678
+# (no ENTRYPOINT/CMD override — inherits `/docker-entrypoint.sh` → `n8n`)
