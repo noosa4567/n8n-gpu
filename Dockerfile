@@ -66,6 +66,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:5678/healthz || exit 1
 
 USER node
+
+# Ensure Conda Python (with Whisper) is in PATH for non-root user
+ENV PATH="/opt/conda/bin:${PATH}"
+
 EXPOSE 5678
 
 # 9) Launch n8n under tini in default server mode
