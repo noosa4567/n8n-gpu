@@ -19,7 +19,7 @@ RUN groupadd -r node \
  && mkdir -p /home/node/.n8n \
  && chown -R node:node /home/node/.n8n
 
-# 2) Install tini, pip & minimal runtime libs (added XCB for FFmpeg)
+# 2) Install tini, pip & minimal runtime libs (added XCB for FFmpeg and Puppeteer dependencies)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini python3-pip \
@@ -28,6 +28,11 @@ RUN apt-get update \
       libvdpau1 \
       curl ca-certificates \
       libxcb1 libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-render0 \
+      fonts-liberation libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
+      libcups2 libdbus-1-3 libdrm2 libgbm1 libexpat1 libfontconfig1 \
+      libgtk-3-0 libpango-1.0-0 libpangocairo-1.0-0 libxcomposite1 \
+      libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 \
+      libxrender1 libxtst6 lsb-release wget xdg-utils \
  && rm -rf /var/lib/apt/lists/*
 
 # 3) Copy GPU-enabled FFmpeg binaries & libs, then update linker cache
@@ -36,13 +41,14 @@ COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
 RUN ldconfig
 
-# 4) Install Node.js 20 & pinned n8n CLI (for stability)
+# 4) Install Node.js 20, pinned n8n CLI, and Puppeteer (for browser automation)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
- && npm install -g n8n@1.104.0 \
+ && npm install -g n8n@1.104.0 puppeteer \
  && npm cache clean --force \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && chown -R node:node /usr/local/lib/node_modules  # Fix permissions for 'node' user
 
 # 5) Install Whisper, tokenizer & pre-download "base" model (with retry)
 RUN pip3 install --no-cache-dir tiktoken openai-whisper \
