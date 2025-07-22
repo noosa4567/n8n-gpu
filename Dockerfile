@@ -65,9 +65,13 @@ RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:5678/healthz || exit 1
 
+# Initialize Conda for non-root 'node' user (sets up .bashrc with PATH and activation)
+RUN su - node -c "/opt/conda/bin/conda init bash" \
+ && chown node:node /home/node/.bashrc
+
 USER node
 
-# Ensure Conda Python (with Whisper) is in PATH for non-root user
+# Ensure Conda PATH is set globally (for non-interactive processes)
 ENV PATH="/opt/conda/bin:${PATH}"
 
 EXPOSE 5678
