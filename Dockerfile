@@ -1,27 +1,26 @@
 ###############################################################################
-# Stage 1 • Pre-built GPU-accelerated FFmpeg (CUDA 11.8)
+# Stage 1  •  Pre-built GPU-accelerated FFmpeg (CUDA 11.8)
 ###############################################################################
 FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 
 ###############################################################################
-# Stage 2 • Runtime: CUDA 11.8 PyTorch, n8n, Puppeteer, Whisper & FFmpeg
+# Stage 2  •  Runtime: CUDA 11.8 PyTorch, n8n, Puppeteer, Whisper & FFmpeg
 ###############################################################################
 FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 
-ARG DEBIAN_FRONTEND=noninteractive
+ARG  DEBIAN_FRONTEND=noninteractive
+ENV  TZ=Australia/Brisbane \
+     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib \
+     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
+     NODE_PATH=/usr/lib/node_modules
 
-ENV TZ=Australia/Brisbane \
-    LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib \
-    WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
-    NODE_PATH=/usr/lib/node_modules
-
-# 1) Non-root 'node' user
+# 1) Create non-root "node" user & prepare ~/.n8n
 RUN groupadd -r node \
  && useradd -r -g node -m -d /home/node -s /bin/bash node \
  && mkdir -p /home/node/.n8n \
  && chown -R node:node /home/node/.n8n
 
-# 2) tini, pip & Puppeteer / FFmpeg deps
+# 2) Install tini, pip, FFmpeg & Puppeteer runtime libs
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini python3-pip \
@@ -38,46 +37,48 @@ RUN apt-get update \
       libxss1 libgconf-2-4 \
  && rm -rf /var/lib/apt/lists/*
 
-# 3) GPU FFmpeg → copy & ldconfig
+# 3) Pull in GPU-enabled FFmpeg from stage 1
 COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
 RUN ldconfig
 
-# 4) Install Node.js 20 + n8n only
+# 4) Install Node.js 20, n8n CLI, Puppeteer & community node
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
- && npm install -g n8n@1.104.0 \
- && rm -rf /var/lib/apt/lists/*
-
-# 5) *Then* globally add Puppeteer + community node
-RUN npm install -g puppeteer n8n-nodes-puppeteer --legacy-peer-deps \
+ && npm install -g n8n@1.104.0 puppeteer n8n-nodes-puppeteer --legacy-peer-deps \
  && npm cache clean --force \
+ && rm -rf /var/lib/apt/lists/* \
  && chown -R node:node /usr/lib/node_modules
 
-# 6) Whisper + model
+# 5) Install Whisper + tokenizer & pre-download "base" model
 RUN pip3 install --no-cache-dir tiktoken openai-whisper \
+ && pip3 cache purge \
  && mkdir -p "${WHISPER_MODEL_PATH}" \
  && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
  && chown -R node:node "${WHISPER_MODEL_PATH}"
 
-# 7) shared data dirs
+# 6) Prepare shared data dirs
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R node:node /data/shared \
  && chmod -R 770 /data/shared
 
-# 8) FFmpeg linkage check
+# 7) Verify FFmpeg linkage early
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
-    && (echo "⚠️  unresolved FFmpeg libs" >&2 && exit 1) \
-    || echo "✅ FFmpeg libs OK"
+     && (echo "⚠️  Unresolved FFmpeg libs" >&2 && exit 1) \
+     || echo "✅ FFmpeg libs OK"
 
-# 9) health & non-root launch
+# 8) Copy & enable your custom entrypoint for community node installs
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# 9) Healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:5678/healthz || exit 1
 
+# 10) Switch to non-root, expose port & launch
 USER node
 EXPOSE 5678
-
-ENTRYPOINT ["tini","--","n8n"]
-CMD []
+ENTRYPOINT ["tini","--","/usr/local/bin/entrypoint.sh"]
+CMD ["n8n"]
