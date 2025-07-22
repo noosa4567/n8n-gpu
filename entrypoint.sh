@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 set -e
 
-# ensure config dir exists
+# ensure the config dir exists and is owned by node
 mkdir -p /home/node/.n8n
 chown node:node /home/node/.n8n
 
-# install Puppeteer + community package(s) into ~/.n8n
-npm install --prefix /home/node/.n8n \
+# install Puppeteer + community node(s) into ~/.n8n
+# any future community nodes can be added here too
+npm install \
+  --prefix /home/node/.n8n \
   --no-optional \
   puppeteer n8n-nodes-puppeteer --legacy-peer-deps
 
-# fix ownership
+# fix ownership again
 chown -R node:node /home/node/.n8n
 
-# exec n8n with any args (default is just ["n8n"])
+# finally exec n8n (defaults to server mode)
 exec n8n "$@"
