@@ -39,7 +39,7 @@ RUN ldconfig
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
- && npm install -g n8n@1.59.1 \  # Pin stable version; update as needed
+ && npm install -g n8n@1.104.0 \
  && npm cache clean --force \
  && rm -rf /var/lib/apt/lists/*
 
