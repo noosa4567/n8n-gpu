@@ -32,7 +32,7 @@ RUN apt-get update \
       libcups2 libdbus-1-3 libdrm2 libgbm1 libexpat1 libfontconfig1 \
       libgtk-3-0 libpango-1.0-0 libpangocairo-1.0-0 libxcomposite1 \
       libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 \
-      libxrender1 libxtst6 lsb-release wget xdg-utils \
+      libxrender1 libxtst6 lsb-release wget xdg-utils git \
  && rm -rf /var/lib/apt/lists/*
 
 # 3) Copy GPU-enabled FFmpeg binaries & libs, then update linker cache
