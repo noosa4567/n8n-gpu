@@ -4,21 +4,22 @@
 FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 
 ###############################################################################
-# Stage 2 • Runtime: CUDA 11.8 PyTorch, n8n core, Whisper, FFmpeg
+# Stage 2 • Runtime: CUDA 11.8 PyTorch, n8n core, Whisper, FFmpeg & Tini
 ###############################################################################
 FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 
 ARG DEBIAN_FRONTEND=noninteractive
+
 ENV TZ=Australia/Brisbane \
     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     NODE_PATH=/usr/lib/node_modules \
     PATH=/usr/local/bin:/usr/bin:/bin
 
-# 1) Install passwd (for groupadd/useradd), tini, pip, Puppeteer libs
+# 1) Install adduser (for user creation), tini, pip and Puppeteer libs
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      passwd tini python3-pip \
+      adduser tini python3-pip \
       libsndio7.0 libasound2 \
       libva2 libva-x11-2 libva-drm2 libva-wayland2 \
       libvdpau1 \
@@ -32,19 +33,18 @@ RUN apt-get update \
       libxss1 libgconf-2-4 \
  && rm -rf /var/lib/apt/lists/*
 
-# 2) Create non-root node user & config dir
-RUN groupadd -r node \
- && useradd  -r -g node -m -d /home/node -s /bin/bash node \
+# 2) Create non-root `node` user & config dir
+RUN adduser --system --group --shell /bin/bash --home /home/node node \
  && mkdir -p /home/node/.n8n \
  && chown node:node /home/node/.n8n
 
-# 3) Pull in FFmpeg binaries & libs
+# 3) Copy GPU-enabled FFmpeg
 COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
 RUN ldconfig
 
-# 4) Install Node 20 + n8n core (no Puppeteer or community nodes here)
+# 4) Install Node 20 + n8n core (pin to your desired version)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
@@ -62,23 +62,23 @@ RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R node:node /data/shared \
  && chmod -R 770 /data/shared
 
-# 7) Verify FFmpeg linkage
+# 7) Verify FFmpeg linkage at build time
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
     && (echo "⚠️ Unresolved FFmpeg libs" >&2 && exit 1) \
     || echo "✅ FFmpeg libs OK"
 
-# 8) Copy & enable your tiny entrypoint wrapper
+# 8) Copy in our tiny entrypoint wrapper
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# 9) Health-check n8n
+# 9) Health-check for n8n
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:5678/healthz || exit 1
 
-# 10) Drop to non-root & expose port
+# 10) Switch to non-root & expose port
 USER node
 EXPOSE 5678
 
-# 11) Launch under tiny → your wrapper → n8n
+# 11) Launch under tini → our wrapper → n8n itself
 ENTRYPOINT ["tini","--","/usr/local/bin/entrypoint.sh"]
 CMD ["n8n"]
