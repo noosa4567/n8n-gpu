@@ -41,11 +41,11 @@ COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
 RUN ldconfig
 
-# 4) Install Node.js 20, pinned n8n CLI, and Puppeteer (for browser automation)
+# 4) Install Node.js 20, pinned n8n CLI, Puppeteer library, and n8n-nodes-puppeteer (for n8n integration)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
- && npm install -g n8n@1.104.0 puppeteer \
+ && npm install -g n8n@1.104.0 puppeteer n8n-nodes-puppeteer \
  && npm cache clean --force \
  && rm -rf /var/lib/apt/lists/* \
  && chown -R node:node /usr/lib/node_modules  # Fix permissions for 'node' user
