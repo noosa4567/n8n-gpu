@@ -48,7 +48,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && npm install -g n8n@1.104.0 puppeteer \
  && npm cache clean --force \
  && rm -rf /var/lib/apt/lists/* \
- && chown -R node:node /usr/local/lib/node_modules  # Fix permissions for 'node' user
+ && chown -R node:node /usr/lib/node_modules  # Fix permissions for 'node' user
 
 # 5) Install Whisper, tokenizer & pre-download "base" model (with retry)
 RUN pip3 install --no-cache-dir tiktoken openai-whisper \
