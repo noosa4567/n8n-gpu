@@ -21,7 +21,7 @@ RUN groupadd -r node \
  && mkdir -p /home/node/.n8n \
  && chown -R node:node /home/node/.n8n
 
-# 2) Install tini, pip & runtime libs (includes Puppeteer deps)
+# 2) Install tini, pip & runtime libs (Puppeteer deps included)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini python3-pip \
@@ -35,7 +35,7 @@ RUN apt-get update \
       libgtk-3-0 libpango-1.0-0 libpangocairo-1.0-0 libxcomposite1 \
       libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 \
       libxrender1 libxtst6 lsb-release wget xdg-utils git \
-      **libxss1 libgconf-2-4** \
+      libxss1 libgconf-2-4 \
  && rm -rf /var/lib/apt/lists/*
 
 # 3) Copy GPU-enabled FFmpeg binaries & libs
@@ -44,7 +44,7 @@ COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
 RUN ldconfig
 
-# 4) Install Node.js 20, n8n CLI, Puppeteer & n8n-nodes-puppeteer
+# 4) Install Node.js 20, n8n CLI, Puppeteer & its n8n node
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
@@ -56,29 +56,26 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 # 5) Install Whisper + tokenizer
 RUN pip3 install --no-cache-dir tiktoken openai-whisper
 
-# 6) Pre-download Whisper "base" model
+# 6) Pre-download Whisper "base" model (single-line, no heredoc)
 RUN mkdir -p "${WHISPER_MODEL_PATH}" \
- && python3 - << 'PYTHON'
-import os, whisper
-whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])
-PYTHON \
+ && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
  && chown -R node:node "${WHISPER_MODEL_PATH}"
 
-# 7) Prepare shared data dirs
+# 7) Prepare shared data directories
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R node:node /data/shared \
  && chmod -R 770 /data/shared
 
-# 8) Verify FFmpeg linkage
+# 8) Verify FFmpeg linkage at build time
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
-     && (echo "⚠️  unresolved FFmpeg libs" >&2 && exit 1) \
+     && (echo "⚠️  Unresolved FFmpeg libs" >&2 && exit 1) \
      || echo "✅ FFmpeg libs OK"
 
 # 9) Healthcheck for n8n readiness
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:5678/healthz || exit 1
 
-# 10) Drop to non-root user & expose port
+# 10) Switch to non-root user & expose port
 USER node
 EXPOSE 5678
 
