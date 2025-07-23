@@ -52,6 +52,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && npm cache clean --force \
  && rm -rf /var/lib/apt/lists/*
 
+# Fix permissions on any root-created files in $HOME (e.g., .npm cache from global install)
+RUN chown -R node:node /home/node
+
 # 5) Install Whisper, then pre-download the "base" model
 RUN pip3 install --no-cache-dir tiktoken openai-whisper \
  && pip3 cache purge \
