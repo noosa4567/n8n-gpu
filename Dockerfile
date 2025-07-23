@@ -57,7 +57,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 RUN chown -R node:node /home/node /usr/lib/node_modules
 
 # 5) Install PyTorch, Whisper, then pre-download the "base" model
-RUN pip3 install --no-cache-dir numpy==1.26.4 torch==2.1.0 --index-url https://download.pytorch.org/whl/cu118 tiktoken openai-whisper \
+RUN pip3 install --no-cache-dir torch==2.1.0 --index-url https://download.pytorch.org/whl/cu118 \
+ && pip3 install --no-cache-dir numpy==1.26.3 tiktoken openai-whisper \
  && mkdir -p "${WHISPER_MODEL_PATH}" \
  && (python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
      || (sleep 5 && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])")) \
