@@ -6,7 +6,7 @@ FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 ###############################################################################
 # Stage 2 • Runtime: CUDA 11.8 PyTorch, n8n, Whisper, FFmpeg & Puppeteer
 ###############################################################################
-FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
+FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Australia/Brisbane \
@@ -54,11 +54,11 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && rm -rf /var/lib/apt/lists/*
 
 # Fix permissions on any root-created files in $HOME or global node_modules
-RUN mkdir -p /usr/lib/node_modules \
- && chown -R node:node /home/node /usr/lib/node_modules
+RUN chown -R node:node /home/node /usr/lib/node_modules
 
-# 5) Install Whisper, then pre-download the "base" model
-RUN pip3 install --no-cache-dir tiktoken openai-whisper \
+# 5) Install PyTorch, Whisper, then pre-download the "base" model
+RUN pip3 install --no-cache-dir torch==2.1.0 --index-url https://download.pytorch.org/whl/cu118 \
+ && pip3 install --no-cache-dir tiktoken openai-whisper \
  && mkdir -p "${WHISPER_MODEL_PATH}" \
  && (python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
      || (sleep 5 && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])")) \
