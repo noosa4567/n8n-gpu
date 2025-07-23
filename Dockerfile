@@ -71,7 +71,9 @@ RUN mkdir -p "${WHISPER_MODEL_PATH}" \
 import os, whisper
 whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])
 PYTHON
- && chown -R node:node "${WHISPER_MODEL_PATH}"
+
+# — now fix ownership in a separate step —
+RUN chown -R node:node "${WHISPER_MODEL_PATH}"
 
 # 8) Prepare shared data dirs
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
@@ -83,17 +85,17 @@ RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
      && (echo "⚠️  unresolved FFmpeg libs" >&2 && exit 1) \
      || echo "✅ FFmpeg libs OK"
 
-# Initialize Conda for non-root 'node' user
+# 10) Initialize Conda for non-root 'node' user
 RUN su - node -c "/opt/conda/bin/conda init bash" \
  && chown node:node /home/node/.bashrc
 
-# 10) Healthcheck for n8n readiness
+# 11) Healthcheck for n8n readiness
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:5678/healthz || exit 1
 
 USER node
 EXPOSE 5678
 
-# 11) Start n8n via tini in default server mode
+# 12) Start n8n via tini in default server mode
 ENTRYPOINT ["tini","--","n8n"]
 CMD []
