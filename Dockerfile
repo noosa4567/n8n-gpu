@@ -57,7 +57,6 @@ RUN chown -R node:node /home/node
 
 # 5) Install Whisper, then pre-download the "base" model
 RUN pip3 install --no-cache-dir tiktoken openai-whisper \
- && pip3 cache purge \
  && mkdir -p "${WHISPER_MODEL_PATH}" \
  && (python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
      || (sleep 5 && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])")) \
