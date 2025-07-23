@@ -13,7 +13,7 @@ ENV TZ=Australia/Brisbane \
     HOME=/home/node \
     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64 \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
-    NODE_PATH=/usr/local/lib/node_modules
+    NODE_PATH=/usr/lib/node_modules
 
 # 1) Create non-root "node" user and n8n config dir
 RUN groupadd -r node \
@@ -54,7 +54,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && rm -rf /var/lib/apt/lists/*
 
 # Fix permissions on any root-created files in $HOME or global node_modules
-RUN chown -R node:node /home/node /usr/local/lib/node_modules
+RUN mkdir -p /usr/lib/node_modules \
+ && chown -R node:node /home/node /usr/lib/node_modules
 
 # 5) Install Whisper, then pre-download the "base" model
 RUN pip3 install --no-cache-dir tiktoken openai-whisper \
