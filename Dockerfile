@@ -10,18 +10,16 @@ FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Tell n8n to use /home/node/.n8n for its config
 ENV HOME=/home/node \
     TZ=Australia/Brisbane \
     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     NODE_PATH=/usr/lib/node_modules
 
-# 1) Install tini, pip, Puppeteer libs, curl, ca-certs, git, etc.
+# 1) Install tini, pip, curl, ca-certs, git and Puppeteer/FFmpeg libs
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      tini python3-pip \
-      curl ca-certificates wget xdg-utils git lsb-release \
+      tini python3-pip curl ca-certificates wget xdg-utils git lsb-release \
       libsndio7.0 libasound2 \
       libva2 libva-x11-2 libva-drm2 libva-wayland2 libvdpau1 \
       libxcb1 libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-render0 \
@@ -38,20 +36,20 @@ COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
 RUN ldconfig
 
-# 3) Install Node 20 + n8n core
+# 3) Install Node.js 20 + n8n core globally
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
  && npm install -g n8n@1.104.0 \
  && rm -rf /var/lib/apt/lists/*
 
-# 4) Whisper + base-model pre-download
+# 4) Whisper + base model pre-download
 RUN pip3 install --no-cache-dir tiktoken openai-whisper \
  && mkdir -p "${WHISPER_MODEL_PATH}" \
  && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
  && rm -rf /root/.cache/whisper /root/.cache/pip
 
-# 5) Prepare n8n config dir (owned by root, but we install into it anyway)
+# 5) Prepare config directory
 RUN mkdir -p /home/node/.n8n
 
 # 6) Add our tiny entrypoint wrapper
@@ -71,7 +69,7 @@ RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:5678/healthz || exit 1
 
-# 10) Expose & run under tini → our wrapper → n8n
+# 10) Expose & run under tini → our wrapper → n8n in server mode
 EXPOSE 5678
 ENTRYPOINT ["tini","--","/usr/local/bin/entrypoint.sh"]
-CMD ["n8n"]
+CMD []
