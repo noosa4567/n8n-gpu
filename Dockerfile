@@ -19,7 +19,7 @@ RUN groupadd -r node \
  && mkdir -p /home/node/.n8n \
  && chown -R node:node /home/node/.n8n
 
-# 2) Install tini, pip & minimal runtime libs (added XCB for FFmpeg, chromium-browser for Puppeteer)
+# 2) Install tini, pip & minimal runtime libs (added XCB for FFmpeg)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini python3-pip \
@@ -28,7 +28,6 @@ RUN apt-get update \
       libvdpau1 \
       curl ca-certificates \
       libxcb1 libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-render0 \
-      chromium-browser \
  && rm -rf /var/lib/apt/lists/*
 
 # 3) Copy GPU-enabled FFmpeg binaries & libs, then update linker cache
