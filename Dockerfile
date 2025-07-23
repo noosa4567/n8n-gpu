@@ -1,14 +1,14 @@
 ###############################################################################
-# Stage 1: pre-built, GPU-accelerated FFmpeg (CUDA 11.8)
+# Stage 1  •  Pre-built GPU-accelerated FFmpeg (CUDA 11.8)
 ###############################################################################
 FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 
 ###############################################################################
-# Stage 2: Runtime: CUDA 11.8 PyTorch 2.1, n8n, Whisper, Puppeteer & FFmpeg
+# Stage 2  •  Runtime: CUDA 11.8 PyTorch, n8n, Whisper, Puppeteer & FFmpeg
 ###############################################################################
 FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 
-# 0) Tell everything that the home dir is /home/node
+# 0) Ensure HOME is set correctly for all tools
 ENV HOME=/home/node
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -39,7 +39,7 @@ RUN apt-get update \
       xdg-utils \
  && rm -rf /var/lib/apt/lists/*
 
-# 3) Copy GPU-accelerated FFmpeg
+# 3) Copy GPU FFmpeg & update linker cache
 COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
@@ -53,28 +53,33 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && npm cache clean --force \
  && rm -rf /var/lib/apt/lists/*
 
-# 5) Whisper + tokenizer + pre-download “base” model
+# 5) Whisper + tokenizer + pre-download base model
 RUN pip3 install --no-cache-dir tiktoken openai-whisper \
  && mkdir -p "${WHISPER_MODEL_PATH}" \
  && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
  && chown -R node:node "${WHISPER_MODEL_PATH}"
 
-# 6) Verify FFmpeg linkage at build time
+# 6) Verify FFmpeg linkage
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
      && (echo "⚠️ Unresolved FFmpeg libs" >&2 && exit 1) \
      || echo "✅ FFmpeg libs OK"
 
-# 7) Prepare shared data directories
+# 7) Prepare shared data dirs
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R node:node /data/shared \
  && chmod -R 770 /data/shared
 
-# 8) Switch to non-root user & install Puppeteer + community node into ~/.n8n
+# 8) **SCRUB** npm’s root-owned cache so node user can write to it
+RUN rm -rf /home/node/.npm \
+ && mkdir -p /home/node/.npm \
+ && chown -R node:node /home/node/.npm
+
+# 9) Switch to non-root & install Puppeteer + community node into ~/.n8n
 USER node
 RUN npm install --prefix /home/node/.n8n \
       puppeteer@23.11.1 n8n-nodes-puppeteer --legacy-peer-deps
 
-# 9) Expose port, healthcheck & launch
+# 10) Expose, healthcheck & launch
 EXPOSE 5678
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
   CMD curl -f http://localhost:5678/healthz || exit 1
