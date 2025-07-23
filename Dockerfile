@@ -11,8 +11,7 @@ FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Australia/Brisbane \
     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64 \
-    WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
-    N8N_CUSTOM_EXTENSIONS=/opt/n8n-custom-nodes
+    WHISPER_MODEL_PATH=/usr/local/lib/whisper_models
 
 # 1) Create non-root "node" user and n8n config dir
 RUN groupadd -r node \
@@ -20,7 +19,7 @@ RUN groupadd -r node \
  && mkdir -p /home/node/.n8n \
  && chown -R node:node /home/node/.n8n
 
-# 2) Install tini, pip & minimal runtime libs (added XCB for FFmpeg)
+# 2) Install tini, pip & minimal runtime libs (added XCB for FFmpeg, chromium-browser for Puppeteer)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini python3-pip \
@@ -29,11 +28,7 @@ RUN apt-get update \
       libvdpau1 \
       curl ca-certificates \
       libxcb1 libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-render0 \
-      fonts-liberation libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \
-      libcups2 libdbus-1-3 libdrm2 libgbm1 libexpat1 libfontconfig1 \
-      libgtk-3-0 libpango-1.0-0 libpangocairo-1.0-0 libxcomposite1 \
-      libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 \
-      libxrender1 libxtst6 lsb-release wget xdg-utils git libxss1 libgconf-2-4 \
+      chromium-browser \
  && rm -rf /var/lib/apt/lists/*
 
 # 3) Copy GPU-enabled FFmpeg binaries & libs, then update linker cache
@@ -50,14 +45,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && npm cache clean --force \
  && rm -rf /var/lib/apt/lists/*
 
-# 5) Install n8n-nodes-puppeteer and puppeteer in a custom non-mounted directory
-RUN mkdir -p /opt/n8n-custom-nodes \
- && cd /opt/n8n-custom-nodes \
- && npm install puppeteer@latest n8n-nodes-puppeteer@latest --legacy-peer-deps \
- && npm cache clean --force \
- && chown -R node:node /opt/n8n-custom-nodes
-
-# 6) Install Whisper, tokenizer & pre-download "base" model (with retry)
+# 5) Install Whisper, tokenizer & pre-download "base" model (with retry)
 RUN pip3 install --no-cache-dir tiktoken openai-whisper \
  && pip3 cache purge \
  && mkdir -p "${WHISPER_MODEL_PATH}" \
@@ -65,23 +53,23 @@ RUN pip3 install --no-cache-dir tiktoken openai-whisper \
      (sleep 5 && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])")) \
  && chown -R node:node "${WHISPER_MODEL_PATH}"
 
-# 7) Prepare shared data directories (tighter permissions)
+# 6) Prepare shared data directories (tighter permissions)
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R node:node /data/shared \
  && chmod -R 770 /data/shared
 
-# 8) Verify FFmpeg linkage at build time
+# 7) Verify FFmpeg linkage at build time
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
      && (echo "⚠️  unresolved FFmpeg libs" >&2 && exit 1) \
      || echo "✅ FFmpeg libs OK"
 
+# 8) Healthcheck for n8n readiness
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:5678/healthz || exit 1
+
 # Initialize Conda for non-root 'node' user (sets up .bashrc with PATH and activation)
 RUN su - node -c "/opt/conda/bin/conda init bash" \
  && chown node:node /home/node/.bashrc
-
-# 9) Healthcheck for n8n readiness
-HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:5678/healthz || exit 1
 
 USER node
 
@@ -90,6 +78,6 @@ ENV PATH="/opt/conda/bin:${PATH}"
 
 EXPOSE 5678
 
-# 10) Launch n8n under tini in default server mode
+# 9) Launch n8n under tini in default server mode
 ENTRYPOINT ["tini","--","n8n"]
 CMD []
