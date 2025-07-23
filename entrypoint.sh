@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 set -e
 
-# Ensure config dir exists
-mkdir -p /home/node/.n8n
+# 1) Install any community nodes into the mounted ~/.n8n
+npm install --prefix /home/node/.n8n \
+    --no-optional \
+    n8n-nodes-puppeteer --legacy-peer-deps
 
-# Install Puppeteer & community nodes into ~/.n8n
-npm install \
-  --prefix /home/node/.n8n \
-  --no-optional \
-  puppeteer n8n-nodes-puppeteer --legacy-peer-deps
+# 2) Fix ownership so the node user can read them
+chown -R node:node /home/node/.n8n/node_modules
 
-# Hand off to n8n (no args → server mode)
-exec n8n "$@"
+# 3) Finally exec n8n as the node user
+exec gosu node n8n "$@"
