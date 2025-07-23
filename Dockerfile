@@ -13,7 +13,7 @@ ENV TZ=Australia/Brisbane \
     HOME=/home/node \
     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64 \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
-    NODE_PATH=/home/node/.n8n/node_modules
+    NODE_PATH=/usr/local/lib/node_modules
 
 # 1) Create non-root "node" user and n8n config dir
 RUN groupadd -r node \
@@ -44,16 +44,17 @@ COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
 RUN ldconfig
 
-# 4) Install Node.js 20 & the n8n CLI
+# 4) Install Node.js 20, the n8n CLI, and Puppeteer + community node globally
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
  && npm install -g n8n@1.104.0 \
+ && npm install -g puppeteer@23.11.1 n8n-nodes-puppeteer --legacy-peer-deps \
  && npm cache clean --force \
  && rm -rf /var/lib/apt/lists/*
 
-# Fix permissions on any root-created files in $HOME (e.g., .npm cache from global install)
-RUN chown -R node:node /home/node
+# Fix permissions on any root-created files in $HOME or global node_modules
+RUN chown -R node:node /home/node /usr/local/lib/node_modules
 
 # 5) Install Whisper, then pre-download the "base" model
 RUN pip3 install --no-cache-dir tiktoken openai-whisper \
@@ -76,12 +77,8 @@ RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
 HEALTHCHECK --interval=30s --timeout=3s --start-period=30s \
   CMD curl -f http://localhost:5678/healthz || exit 1
 
-# 9) Drop to non-root & install Puppeteer + Puppeteer community node
+# 9) Drop to non-root
 USER node
-RUN npm install --prefix /home/node/.n8n \
-      puppeteer@23.11.1 \
-      n8n-nodes-puppeteer \
-      --legacy-peer-deps
 
 EXPOSE 5678
 
