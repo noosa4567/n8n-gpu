@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-# 1) Install any community nodes into the mounted ~/.n8n
-npm install --prefix /home/node/.n8n \
-    --no-optional \
-    n8n-nodes-puppeteer --legacy-peer-deps
+# (No need to switch user. We're already 'node'.)
 
-# 2) Fix ownership so the node user can read them
-chown -R node:node /home/node/.n8n/node_modules
-
-# 3) Finally exec n8n as the node user
-exec gosu node n8n "$@"
+# Delegate to n8n’s binary under tini:
+exec "$@"
