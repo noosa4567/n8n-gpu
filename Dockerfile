@@ -22,10 +22,10 @@ RUN groupadd -r node \
  && mkdir -p /home/node/.n8n \
  && chown -R node:node /home/node/.n8n
 
-# 2) Install tini, pip & runtime libs (Puppeteer deps included)
+# 2) Install tini, pip, gnupg2 & Puppeteer/FFmpeg deps
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      tini python3-pip \
+      tini python3-pip gnupg2 \
       libsndio7.0 libasound2 \
       libva2 libva-x11-2 libva-drm2 libva-wayland2 \
       libvdpau1 \
@@ -40,7 +40,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # 3) Add Google's Chrome repo & install chrome
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub \
+      | apt-key add - \
  && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
       > /etc/apt/sources.list.d/google.list \
  && apt-get update \
@@ -53,7 +54,7 @@ COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
 RUN ldconfig
 
-# 5) Install Node.js 20, n8n CLI, Puppeteer & n8n-nodes-puppeteer
+# 5) Install Node.js 20, n8n CLI, Puppeteer & community node
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
@@ -72,30 +73,30 @@ import os, whisper
 whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])
 PYTHON
 
-# — now fix ownership in a separate step —
+# 8) Fix ownership on the model dir
 RUN chown -R node:node "${WHISPER_MODEL_PATH}"
 
-# 8) Prepare shared data dirs
+# 9) Prepare shared data dirs
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R node:node /data/shared \
  && chmod -R 770 /data/shared
 
-# 9) Verify FFmpeg linkage
+# 10) Verify FFmpeg linkage
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
      && (echo "⚠️  unresolved FFmpeg libs" >&2 && exit 1) \
      || echo "✅ FFmpeg libs OK"
 
-# 10) Initialize Conda for non-root 'node' user
+# 11) Initialize Conda for non-root 'node' user
 RUN su - node -c "/opt/conda/bin/conda init bash" \
  && chown node:node /home/node/.bashrc
 
-# 11) Healthcheck for n8n readiness
+# 12) Healthcheck for n8n readiness
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:5678/healthz || exit 1
 
 USER node
 EXPOSE 5678
 
-# 12) Start n8n via tini in default server mode
+# 13) Start n8n via tini in default server mode
 ENTRYPOINT ["tini","--","n8n"]
 CMD []
