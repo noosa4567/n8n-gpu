@@ -29,13 +29,14 @@ RUN apt-get update \
       libva2 libva-x11-2 libva-drm2 libva-wayland2 \
       libvdpau1 \
       curl ca-certificates \
-      # Puppeteer deps:
+      # Puppeteer deps (extended for rendering/symbol fixes):
       fonts-liberation libatk-bridge2.0-0 libatk1.0-0 libcups2 libdbus-1-3 \
       libexpat1 libfontconfig1 libgbm1 libgtk-3-0 libnspr4 libnss3 \
       libpango-1.0-0 libpangocairo-1.0-0 libxcomposite1 libxcursor1 \
       libxdamage1 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 \
       libxcb1 libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-render0 \
       lsb-release wget xdg-utils \
+      libcairo2 libfribidi0 libharfbuzz0b libthai0 libdatrie1 \
  && rm -rf /var/lib/apt/lists/*
 
 # 3) Copy GPU-enabled FFmpeg & libs
