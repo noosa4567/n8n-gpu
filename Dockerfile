@@ -1,5 +1,5 @@
 ###############################################################################
-# Stage 1 • Pre-built GPU-accelerated FFmpeg (CUDA 11.8)
+# Stage 1 • Pre‐built GPU‐accelerated FFmpeg (CUDA 11.8)
 ###############################################################################
 FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 
@@ -9,7 +9,6 @@ FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
-
 ENV HOME=/home/node \
     TZ=Australia/Brisbane \
     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64 \
@@ -17,15 +16,22 @@ ENV HOME=/home/node \
     NODE_PATH=/usr/lib/node_modules \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable \
-    PATH=/opt/conda/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    PATH=/usr/local/lib/nodejs/bin:/opt/conda/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# 1) Create non-root “node” user and n8n config dir
+# 1) Create non-root "node" user, n8n dir & cache for static assets
 RUN groupadd -r node \
  && useradd -r -g node -m -d "$HOME" -s /bin/bash node \
- && mkdir -p "$HOME/.n8n" \
- && chown -R node:node "$HOME/.n8n"
+ && mkdir -p "$HOME/.n8n" "$HOME/.cache/n8n/public" \
+ && chown -R node:node "$HOME"
 
-# 2) Install tini, pip, git, gnupg, Chrome + Puppeteer deps
+# 2) Copy FFmpeg binaries & libs, then strip out any old libgbm so it cannot shadow the distro’s
+COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
+COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
+COPY --from=ffmpeg /usr/local/lib/*.so*   /usr/local/lib/
+RUN rm -f /usr/local/lib/libgbm* \
+ && ldconfig
+
+# 3) Install system deps: tini, pip, git, gnupg, Mesa GBM, Chrome deps, then Chrome itself
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini python3-pip git gnupg \
@@ -40,63 +46,56 @@ RUN apt-get update \
       libxcb1 libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-render0 \
       lsb-release wget xdg-utils \
       libcairo2 libfribidi0 libharfbuzz0b libthai0 libdatrie1 \
- && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub \
+ && wget -qO - https://dl.google.com/linux/linux_signing_key.pub \
       | gpg --dearmor -o /usr/share/keyrings/googlechrome-keyring.gpg \
- && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
+ && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-keyring.gpg] \
+      http://dl.google.com/linux/chrome/deb/ stable main" \
       > /etc/apt/sources.list.d/google-chrome.list \
  && apt-get update \
  && apt-get install -y --no-install-recommends google-chrome-stable \
  && rm -rf /var/lib/apt/lists/*
 
-# 3) Copy FFmpeg & libs, remove conflicting fribidi/harfbuzz, update cache
-COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
-COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
-COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
-RUN rm -f /usr/local/lib/libfribidi* /usr/local/lib/libharfbuzz* \
- && ldconfig
-
-# 4) Install Node.js 20, n8n CLI, Puppeteer & community node
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
- && apt-get update \
- && apt-get install -y --no-install-recommends nodejs \
- && npm install -g n8n@1.104.0 \
- && npm install -g puppeteer@23.11.1 n8n-nodes-puppeteer --legacy-peer-deps \
+# 4) Install Node 20 via official tarball (ensures npm is present), then global n8n & Puppeteer
+RUN curl -fsSL https://nodejs.org/dist/v20.19.4/node-v20.19.4-linux-x64.tar.xz -o node.tar.xz \
+ && mkdir -p /usr/local/lib/nodejs \
+ && tar -xJf node.tar.xz -C /usr/local/lib/nodejs --strip-components=1 \
+ && ln -s /usr/local/lib/nodejs/bin/{node,npm,npx} /usr/bin/ \
+ && rm node.tar.xz \
+ && npm install -g n8n@1.104.0 puppeteer@23.11.1 n8n-nodes-puppeteer --legacy-peer-deps \
  && npm cache clean --force \
- && rm -rf /var/lib/apt/lists/* \
- && chown -R node:node /usr/lib/node_modules
+ && chown -R node:node /usr/local/lib/nodejs
 
-# 5) Install PyTorch/CUDA wheels, Whisper + tokenizer, pre-download model
+# 5) Install PyTorch/CUDA wheels, Whisper + tokenizer, then pre-download the "base" model
 RUN pip3 install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cu118 \
       torch==2.1.0+cu118 numpy==1.26.3 \
  && pip3 install --no-cache-dir tiktoken openai-whisper \
  && mkdir -p "$WHISPER_MODEL_PATH" \
- && (python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
-      || (sleep 5 && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])")) \
+ && (python3 - << 'PYCODE'
+import os, whisper
+whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])
+PYCODE
+   ) \
  && chown -R node:node "$WHISPER_MODEL_PATH"
 
-# 6) Pre-create n8n cache so runtime mkdir doesn’t fail
-RUN mkdir -p "$HOME/.cache/n8n/public" \
- && chown -R node:node "$HOME/.cache"
-
-# 7) Prepare shared data directories
+# 6) Prepare your shared data dirs (videos, audio, transcripts)
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R node:node /data/shared \
  && chmod -R 770 /data/shared
 
-# 8) Fail-fast if FFmpeg libs are broken
+# 7) Quick sanity check on FFmpeg’s GPU libs
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
      && (echo "⚠️ Unresolved FFmpeg libs" >&2 && exit 1) \
      || echo "✅ FFmpeg libs OK"
 
-# 9) Healthcheck for n8n readiness
+# 8) Healthcheck for n8n readiness
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:5678/healthz || exit 1
 
-# 10) Switch to non-root & expose port
+# 9) Drop to non-root “node” and expose the port
 USER node
 EXPOSE 5678
 
-# 11) Launch n8n under tini
+# 10) Launch n8n under tini
 ENTRYPOINT ["tini","--","n8n"]
 CMD []
