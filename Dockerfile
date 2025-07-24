@@ -1,18 +1,20 @@
 ###############################################################################
-# 1) Grab NVIDIA-accelerated FFmpeg build (with NVENC) 
+# Stage 1 • Pre-built GPU-accelerated FFmpeg (CUDA 11.8)
 ###############################################################################
 FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 
 ###############################################################################
-# 2) Runtime: Ubuntu 22.04 + CUDA 11.8/cuDNN8
+# Stage 2 • Runtime: CUDA 11.8 Ubuntu 22.04, PyTorch, n8n, Whisper, FFmpeg & Puppeteer
 ###############################################################################
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
-ENV HOME=/home/node \
-    TZ=Australia/Brisbane
 
-# 3) System dependencies: tini, git, xz-utils, python3-pip, Puppeteer libs
+ENV HOME=/home/node \
+    TZ=Australia/Brisbane \
+    WHISPER_MODEL_PATH=/usr/local/lib/whisper_models
+
+# 1) System dependencies: tini, git, xz-utils, python3-pip, Puppeteer libs
 RUN apt-get update && apt-get install -y --no-install-recommends \
       tini \
       git \
@@ -44,51 +46,53 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libdatrie1 \
  && rm -rf /var/lib/apt/lists/*
 
-# 4) Copy GPU-enabled ffmpeg + libs from the build stage
+# 2) Copy GPU-enabled FFmpeg + libs
 COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
 RUN ldconfig
 
-# 5) Node.js 20 + npm (NodeSource), leave git present
+# 3) Install Node.js 20 + npm via NodeSource
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
 
-# 6) Globally install n8n, Puppeteer (bundled Chrome), community node
-RUN npm install -g n8n@latest \
-                  puppeteer@23.11.1 \
-                  n8n-nodes-puppeteer \
-        --legacy-peer-deps \
+# 4) Globally install n8n, Puppeteer (bundled Chromium) & community node
+RUN npm install -g \
+      n8n@latest \
+      puppeteer@23.11.1 \
+      n8n-nodes-puppeteer \
+      --legacy-peer-deps \
  && npm cache clean --force
 
-# 7) Whisper + PyTorch (GPU) + tiktoken + pre-download “base” model
-RUN pip3 install --no-cache-dir \
-      torch==2.1.0+cu118 \
+# 5) Whisper + PyTorch (GPU) + tiktoken + pre-download “base” model
+RUN pip3 install --no-cache-dir numpy==1.26.3 \
+ && pip3 install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cu118 \
-    && pip3 install --no-cache-dir \
-      openai-whisper \
+      torch==2.1.0+cu118 \
+ && pip3 install --no-cache-dir \
       tiktoken \
-    && python3 -c "import whisper; whisper.load_model('base')" \
-    && rm -rf /root/.cache
+      openai-whisper==20240930 \
+ # now pull down the base model into our shared path
+ && mkdir -p "${WHISPER_MODEL_PATH}" \
+ && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
+ && rm -rf /root/.cache \
+ # ensure node user can read it
+ && chown -R node:node "${WHISPER_MODEL_PATH}"
 
-# 8) Create non-root user + soak up all runtime dirs
+# 6) Create non-root user & pre-create all runtime dirs (avoid any EACCES)
 RUN useradd -m -u 1000 -s /bin/bash node \
  && mkdir -p \
-      $HOME/.n8n \
-      $HOME/.cache/n8n/public \
-      /data/shared/videos \
-      /data/shared/audio \
-      /data/shared/transcripts \
- && chown -R node:node \
-      $HOME \
-      /data/shared
+      "$HOME/.n8n" \
+      "$HOME/.cache/n8n/public" \
+      /data/shared/{videos,audio,transcripts} \
+ && chown -R node:node "$HOME" /data/shared
 
-# 9) Healthcheck on n8n
+# 7) Healthcheck on n8n HTTP endpoint
 HEALTHCHECK --interval=30s --timeout=3s --start-period=30s \
   CMD curl -f http://localhost:5678/healthz || exit 1
 
-# 10) Drop to non-root, expose port, launch under tini
+# 8) Switch to non-root, expose port, launch under tini
 USER node
 WORKDIR /home/node
 EXPOSE 5678
