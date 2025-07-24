@@ -10,23 +10,22 @@ FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-ENV \
-  HOME=/home/node \
-  TZ=Australia/Brisbane \
-  LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64 \
-  WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
-  NODE_PATH=/usr/lib/node_modules \
-  PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-  **PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable** \   # Added: Point Puppeteer to system Chrome
-  PATH=/opt/conda/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV HOME=/home/node \
+    TZ=Australia/Brisbane \
+    LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64 \
+    WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
+    NODE_PATH=/usr/lib/node_modules \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable \
+    PATH=/opt/conda/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# 1) Create non-root node user + config dir
+# 1) Create non-root “node” user and n8n config dir
 RUN groupadd -r node \
  && useradd -r -g node -m -d "$HOME" -s /bin/bash node \
  && mkdir -p "$HOME/.n8n" \
  && chown -R node:node "$HOME/.n8n"
 
-# 2) Install tini, python3-pip, git, gnupg + Chrome/Puppeteer deps
+# 2) Install tini, pip, git, gnupg, Chrome + Puppeteer deps
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini python3-pip git gnupg \
@@ -43,14 +42,13 @@ RUN apt-get update \
       libcairo2 libfribidi0 libharfbuzz0b libthai0 libdatrie1 \
  && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub \
       | gpg --dearmor -o /usr/share/keyrings/googlechrome-keyring.gpg \
- && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-keyring.gpg] \
-     http://dl.google.com/linux/chrome/deb/ stable main" \
+ && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
       > /etc/apt/sources.list.d/google-chrome.list \
  && apt-get update \
  && apt-get install -y --no-install-recommends google-chrome-stable \
  && rm -rf /var/lib/apt/lists/*
 
-# 3) Copy GPU-enabled FFmpeg + libraries, delete conflicting fribidi/harfbuzz, rebuild cache
+# 3) Copy FFmpeg & libs, remove conflicting fribidi/harfbuzz, update cache
 COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
@@ -67,7 +65,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && rm -rf /var/lib/apt/lists/* \
  && chown -R node:node /usr/lib/node_modules
 
-# 5) Install PyTorch/CUDA wheels, Whisper + tokenizer & pre-download model
+# 5) Install PyTorch/CUDA wheels, Whisper + tokenizer, pre-download model
 RUN pip3 install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cu118 \
       torch==2.1.0+cu118 numpy==1.26.3 \
@@ -77,11 +75,11 @@ RUN pip3 install --no-cache-dir \
       || (sleep 5 && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])")) \
  && chown -R node:node "$WHISPER_MODEL_PATH"
 
-# 6) Pre-create n8n’s cache/public → avoids EACCES at startup
+# 6) Pre-create n8n cache so runtime mkdir doesn’t fail
 RUN mkdir -p "$HOME/.cache/n8n/public" \
  && chown -R node:node "$HOME/.cache"
 
-# 7) Prepare shared data dirs (video/audio/transcripts)
+# 7) Prepare shared data directories
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R node:node /data/shared \
  && chmod -R 770 /data/shared
@@ -99,6 +97,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
 USER node
 EXPOSE 5678
 
-# 11) Launch under tini
+# 11) Launch n8n under tini
 ENTRYPOINT ["tini","--","n8n"]
 CMD []
