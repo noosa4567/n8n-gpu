@@ -1,5 +1,5 @@
 ###############################################################################
-# Stage 1 • Pre‐built GPU‐accelerated FFmpeg (CUDA 11.8)
+# Stage 1 • Pre-built GPU-accelerated FFmpeg (CUDA 11.8)
 ###############################################################################
 FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 
@@ -18,20 +18,20 @@ ENV HOME=/home/node \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable \
     PATH=/usr/local/lib/nodejs/bin:/opt/conda/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# 1) Create non-root "node" user, n8n dir & cache for static assets
+# 1) Create non-root user, n8n config dir and cache for front-end assets
 RUN groupadd -r node \
  && useradd -r -g node -m -d "$HOME" -s /bin/bash node \
  && mkdir -p "$HOME/.n8n" "$HOME/.cache/n8n/public" \
  && chown -R node:node "$HOME"
 
-# 2) Copy FFmpeg binaries & libs, then strip out any old libgbm so it cannot shadow the distro’s
+# 2) Copy GPU-enabled FFmpeg binaries & libs, strip out old libgbm, update cache
 COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/*.so*   /usr/local/lib/
 RUN rm -f /usr/local/lib/libgbm* \
  && ldconfig
 
-# 3) Install system deps: tini, pip, git, gnupg, Mesa GBM, Chrome deps, then Chrome itself
+# 3) Install system deps, then Google Chrome
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini python3-pip git gnupg \
@@ -55,7 +55,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends google-chrome-stable \
  && rm -rf /var/lib/apt/lists/*
 
-# 4) Install Node 20 via official tarball (ensures npm is present), then global n8n & Puppeteer
+# 4) Install Node 20 via official tarball, then global n8n & Puppeteer
 RUN curl -fsSL https://nodejs.org/dist/v20.19.4/node-v20.19.4-linux-x64.tar.xz -o node.tar.xz \
  && mkdir -p /usr/local/lib/nodejs \
  && tar -xJf node.tar.xz -C /usr/local/lib/nodejs --strip-components=1 \
@@ -65,34 +65,33 @@ RUN curl -fsSL https://nodejs.org/dist/v20.19.4/node-v20.19.4-linux-x64.tar.xz -
  && npm cache clean --force \
  && chown -R node:node /usr/local/lib/nodejs
 
-# 5) Install PyTorch/CUDA wheels, Whisper + tokenizer, then pre-download the "base" model
+# 5) Install PyTorch/CUDA wheels, Whisper, then pre-download the “base” model
 RUN pip3 install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cu118 \
       torch==2.1.0+cu118 numpy==1.26.3 \
  && pip3 install --no-cache-dir tiktoken openai-whisper \
  && mkdir -p "$WHISPER_MODEL_PATH" \
- && (python3 - << 'PYCODE'
+ && python3 - << 'PYCODE'
 import os, whisper
 whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])
-PYCODE
-   ) \
+PYCODE \
  && chown -R node:node "$WHISPER_MODEL_PATH"
 
-# 6) Prepare your shared data dirs (videos, audio, transcripts)
+# 6) Prepare shared data dirs (videos, audio, transcripts)
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R node:node /data/shared \
  && chmod -R 770 /data/shared
 
-# 7) Quick sanity check on FFmpeg’s GPU libs
+# 7) Verify FFmpeg libraries
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
      && (echo "⚠️ Unresolved FFmpeg libs" >&2 && exit 1) \
      || echo "✅ FFmpeg libs OK"
 
-# 8) Healthcheck for n8n readiness
+# 8) Healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:5678/healthz || exit 1
 
-# 9) Drop to non-root “node” and expose the port
+# 9) Switch to node & expose port
 USER node
 EXPOSE 5678
 
