@@ -17,7 +17,7 @@ ENV HOME=/home/node \
     NODE_PATH=/usr/lib/node_modules \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
-# 1) Create non-root “node” user and n8n config dir
+# 1) Create non-root "node" user and n8n config dir
 RUN groupadd -r node \
  && useradd -r -g node -m -d "$HOME" -s /bin/bash node \
  && mkdir -p "$HOME/.n8n" \
@@ -40,8 +40,7 @@ RUN apt-get update \
       libcairo2 libfribidi0 libharfbuzz0b libthai0 libdatrie1 \
  && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub \
       | gpg --dearmor -o /usr/share/keyrings/googlechrome-keyring.gpg \
- && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-keyring.gpg] \
-     http://dl.google.com/linux/chrome/deb/ stable main" \
+ && echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main' \
       > /etc/apt/sources.list.d/google-chrome.list \
  && apt-get update \
  && apt-get install -y --no-install-recommends google-chrome-stable \
@@ -69,16 +68,7 @@ RUN pip3 install --no-cache-dir \
       torch==2.1.0+cu118 numpy==1.26.3 \
  && pip3 install --no-cache-dir tiktoken openai-whisper \
  && mkdir -p "$WHISPER_MODEL_PATH" \
- && python3 - << 'PYTHON'
-import os, whisper
-try:
-    whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])
-except Exception as e:
-    print(f"Initial download failed: {e}")
-    import time
-    time.sleep(5)
-    whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])
-PYTHON
+ && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
  && chown -R node:node "$WHISPER_MODEL_PATH"
 
 # 6) Prepare shared data directories
@@ -88,10 +78,10 @@ RUN mkdir -p /data/shared/{videos,audio,transcripts} \
 
 # 7) Fail-fast if FFmpeg libs are broken
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
-     && (echo "⚠️ Unresolved FFmpeg libs" >&2 && exit 1) \
-     || echo "✅ FFmpeg libs OK"
+     && (echo "⚠️ Unresolved FFmpeg libraries" >&2 && exit 1) \
+     || echo "✅ FFmpeg libraries OK"
 
-# 8) Healthcheck
+# 8) Healthcheck for n8n
 HEALTHCHECK --interval=30s --timeout=3s --start-period=30s \
   CMD curl -f http://localhost:5678/healthz || exit 1
 
