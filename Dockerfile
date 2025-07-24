@@ -17,6 +17,7 @@ ENV \
   WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
   NODE_PATH=/usr/lib/node_modules \
   PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+  **PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable** \   # Added: Point Puppeteer to system Chrome
   PATH=/opt/conda/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # 1) Create non-root node user + config dir
