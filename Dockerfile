@@ -23,7 +23,7 @@ RUN groupadd -r node \
  && mkdir -p "$HOME/.n8n" \
  && chown -R node:node "$HOME/.n8n"
 
-# 2) Install tini, pip, git, gnupg, Puppeteer & Chrome deps
+# 2) Install tini, pip, git, gnupg, Chrome + Puppeteer deps
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini python3-pip git gnupg \
@@ -47,13 +47,13 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends google-chrome-stable \
  && rm -rf /var/lib/apt/lists/*
 
-# 3) Copy FFmpeg + ffprobe + libs, then update linker cache
+# 3) Copy FFmpeg & libs, update linker cache
 COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
 RUN ldconfig
 
-# 4) Install Node.js 20, n8n CLI, Puppeteer & community node globally
+# 4) Install Node.js 20, n8n CLI, Puppeteer & community node
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
@@ -63,7 +63,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && rm -rf /var/lib/apt/lists/* \
  && chown -R node:node /usr/lib/node_modules
 
-# 5) Install PyTorch GPU wheels + Whisper + tokenizer; pre-download base model
+# 5) Install PyTorch/CUDA wheels, Whisper + tokenizer, pre-download model
 RUN pip3 install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cu118 \
       torch==2.1.0+cu118 numpy==1.26.3 \
@@ -71,7 +71,13 @@ RUN pip3 install --no-cache-dir \
  && mkdir -p "$WHISPER_MODEL_PATH" \
  && python3 - << 'PYTHON'
 import os, whisper
-whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])
+try:
+    whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])
+except Exception as e:
+    print(f"Initial download failed: {e}")
+    import time
+    time.sleep(5)
+    whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])
 PYTHON
  && chown -R node:node "$WHISPER_MODEL_PATH"
 
@@ -80,7 +86,7 @@ RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R node:node /data/shared \
  && chmod -R 770 /data/shared
 
-# 7) Verify FFmpeg linkage
+# 7) Fail-fast if FFmpeg libs are broken
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
      && (echo "⚠️ Unresolved FFmpeg libs" >&2 && exit 1) \
      || echo "✅ FFmpeg libs OK"
@@ -89,7 +95,7 @@ RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
 HEALTHCHECK --interval=30s --timeout=3s --start-period=30s \
   CMD curl -f http://localhost:5678/healthz || exit 1
 
-# 9) Drop to non-root and expose port
+# 9) Drop to non-root, expose port
 USER node
 EXPOSE 5678
 
