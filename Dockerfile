@@ -13,7 +13,8 @@ ENV TZ=Australia/Brisbane \
     HOME=/home/node \
     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64 \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
-    NODE_PATH=/usr/lib/node_modules
+    NODE_PATH=/usr/lib/node_modules \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 # 1) Create non-root "node" user and n8n config dir
 RUN groupadd -r node \
@@ -24,7 +25,7 @@ RUN groupadd -r node \
 # 2) Install tini, pip, git & all required libs for FFmpeg + Puppeteer/Chromium
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      tini python3-pip git \
+      tini python3-pip git gnupg \
       libsndio7.0 libasound2 \
       libva2 libva-x11-2 libva-drm2 libva-wayland2 \
       libvdpau1 \
@@ -37,6 +38,10 @@ RUN apt-get update \
       libxcb1 libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-render0 \
       lsb-release wget xdg-utils \
       libcairo2 libfribidi0 libharfbuzz0b libthai0 libdatrie1 \
+ && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/googlechrome-linux-keyring.gpg \
+ && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/googlechrome-linux-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends google-chrome-stable \
  && rm -rf /var/lib/apt/lists/*
 
 # 3) Copy GPU-enabled FFmpeg & libs
@@ -58,8 +63,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 RUN chown -R node:node /home/node /usr/lib/node_modules
 
 # 5) Install PyTorch, Whisper, then pre-download the "base" model
-RUN pip3 install --no-cache-dir torch==2.1.0 --index-url https://download.pytorch.org/whl/cu118 \
- && pip3 install --no-cache-dir numpy==1.26.3 tiktoken openai-whisper \
+RUN pip3 install --no-cache-dir numpy==1.26.3 torch==2.1.0 --index-url https://download.pytorch.org/whl/cu118 tiktoken openai-whisper \
  && mkdir -p "${WHISPER_MODEL_PATH}" \
  && (python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
      || (sleep 5 && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])")) \
