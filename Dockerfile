@@ -72,10 +72,6 @@ RUN pip3 install --no-cache-dir \
  && (python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" || (sleep 5 && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])")) \
  && chown -R node:node "$WHISPER_MODEL_PATH"
 
-# Pre-create n8n cache dir to avoid runtime EACCES
-RUN mkdir -p /home/node/.cache/n8n \
- && chown -R node:node /home/node
-
 # 6) Prepare shared data directories
 RUN mkdir -p /data/shared/{videos,audio,transcripts} \
  && chown -R node:node /data/shared \
