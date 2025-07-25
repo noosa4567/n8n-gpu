@@ -60,7 +60,8 @@ COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
 RUN ldconfig \
- && rm -f /usr/local/lib/libfontconfig* /usr/local/lib/libfreetype*
+ && rm -f /usr/local/lib/libfontconfig* /usr/local/lib/libfreetype* /usr/local/lib/libpango* /usr/local/lib/libfribidi* \
+ && ldconfig 
 
 # 6) Install Node.js 20 & npm
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
