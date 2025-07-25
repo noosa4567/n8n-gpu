@@ -1,49 +1,88 @@
 # syntax=docker/dockerfile:1
+
 ###############################################################################
-# 1) Pre-built GPU-accelerated FFmpeg (CUDA 11.8)
+# Stage 1 • Pre-built GPU-accelerated FFmpeg (CUDA 11.8)
 ###############################################################################
 FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 
 ###############################################################################
-# 2) Runtime: CUDA 11.8 Ubuntu 22.04 + n8n, Whisper, FFmpeg & Puppeteer
+# Stage 2 • Runtime: CUDA 11.8 Ubuntu 22.04, PyTorch, n8n, Whisper, FFmpeg & Puppeteer
 ###############################################################################
-FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 
+# avoid interactive prompts
 ARG DEBIAN_FRONTEND=noninteractive
-ENV HOME=/home/node \
-    TZ=Australia/Brisbane \
-    WHISPER_MODEL_PATH=/usr/local/lib/whisper_models
 
-# 2.1) Create node@UID=999 in video group
+# preserve your timezone, home dir, whisper model path
+ENV TZ=Australia/Brisbane \
+    HOME=/home/node \
+    WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+
+###############################################################################
+# 1) Create node user (UID 999) in video group for GPU access & n8n config dir
+###############################################################################
 RUN groupadd -r node \
- && useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node
+ && useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node \
+ && mkdir -p "$HOME/.n8n" \
+ && chown -R node:node "$HOME"
 
-# 2.2) Disable NVIDIA repos & install runtime deps
-RUN rm -f /etc/apt/sources.list.d/cuda*.list /etc/apt/sources.list.d/nvidia*.list \
- && sed -Ei '/developer\.download\.nvidia\.com\/compute/d' /etc/apt/sources.list* || true \
- && apt-get update \
+###############################################################################
+# 2) Install system deps:
+#    • tini (PID 1)
+#    • Python tooling
+#    • all XCB/libs that ffmpeg + Chrome need (including libxcb-shape0)
+#    • Chrome Puppeteer dependencies
+###############################################################################
+RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      tini git curl ca-certificates python3 python3-pip xz-utils \
-      libnss3 libxss1 libasound2 libcups2 libatk-bridge2.0-0 libgtk-3-0 \
-      libxcomposite1 libxdamage1 libgbm1 \
-      libpangocairo-1.0-0 libpango-1.0-0 libxrandr2 libxrender1 libxi6 \
-      libxtst6 libxcursor1 libfontconfig1 fonts-liberation \
-      libfribidi0 libharfbuzz0b libthai0 libdatrie1 \
+      tini git curl ca-certificates gnupg \
+      python3 python3-pip \
+      libsndio7.0 libasound2 \
+      libva2 libva-x11-2 libva-drm2 libva-wayland2 \
+      libvdpau1 \
+      libxcb1 libxcb-shm0 libxcb-render0 libxcb-shape0 libxcb-xfixes0 \
+      libx11-6 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 \
+      libxrender1 libxss1 libxtst6 libxi6 libxcursor1 \
+      libatk-bridge2.0-0 libatk1.0-0 libcups2 libgtk-3-0 \
+      libpangocairo-1.0-0 libpango-1.0-0 libfontconfig1 \
+      fonts-liberation libfribidi0 libharfbuzz0b libthai0 libdatrie1 \
  && rm -rf /var/lib/apt/lists/*
 
-# 2.3) Copy GPU-built FFmpeg & update linker cache
+###############################################################################
+# 3) Copy GPU-enabled FFmpeg and libraries, rebuild linker cache
+###############################################################################
 COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
 RUN ldconfig
 
-# 2.4) Install Node.js 20.x (includes npm)
+###############################################################################
+# 4) Install Google Chrome Stable (for Puppeteer)
+###############################################################################
+RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+     | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg \
+ && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] \
+     http://dl.google.com/linux/chrome/deb/ stable main" \
+     > /etc/apt/sources.list.d/google-chrome.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+      google-chrome-stable \
+ && rm -rf /var/lib/apt/lists/*
+
+###############################################################################
+# 5) Install Node.js 20 & npm
+###############################################################################
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
 
-# 2.5) Globally install n8n, Puppeteer, community node & ajv peer
+###############################################################################
+# 6) Globally install n8n, Puppeteer (uses system Chrome), community node & ajv
+#    Adding ajv peer ensures express-openapi-validator loads correctly.
+###############################################################################
 RUN npm install -g \
       n8n@latest \
       puppeteer@23.11.1 \
@@ -53,7 +92,9 @@ RUN npm install -g \
  && npm cache clean --force \
  && chown -R node:node "$(npm root -g)"
 
-# 2.6) Whisper + PyTorch (GPU) + tiktoken + pre-download “base” model
+###############################################################################
+# 7) Install PyTorch/CUDA wheels, Whisper & tokenizer, then pre-download model
+###############################################################################
 RUN pip3 install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cu118 \
       torch==2.1.0+cu118 numpy==1.26.3 \
@@ -63,21 +104,34 @@ RUN pip3 install --no-cache-dir \
  && rm -rf /root/.cache \
  && chown -R node:node "$WHISPER_MODEL_PATH"
 
-# 2.7) Pre-create & chown runtime dirs (avoid EACCES)
+###############################################################################
+# 8) Pre-create & chown runtime dirs (n8n cache, Puppeteer cache, shared media)
+###############################################################################
 RUN mkdir -p \
-      "$HOME/.n8n" \
       "$HOME/.cache/n8n/public" \
       "$HOME/.cache/puppeteer" \
       /data/shared/{videos,audio,transcripts} \
  && chown -R node:node "$HOME" /data/shared
 
-# 2.8) Healthcheck
-HEALTHCHECK --interval=30s --timeout=3s --start-period=30s \
-  CMD curl -f http://localhost:5678/healthz || exit 1
+###############################################################################
+# 9) Verify FFmpeg linkage at build time
+###############################################################################
+RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
+     && (echo "⚠️  Unresolved FFmpeg libs" >&2 && exit 1) \
+     || echo "✅ FFmpeg libs OK"
 
-# 2.9) Switch to node, expose port & launch n8n
+###############################################################################
+# 10) Healthcheck for n8n readiness
+###############################################################################
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:5678/healthz || exit 1
+
+###############################################################################
+# 11) Switch to non-root, expose port & start n8n in server ("start") mode
+###############################################################################
 USER node
 WORKDIR $HOME
 EXPOSE 5678
+
 ENTRYPOINT ["tini","--","n8n","start"]
 CMD []
