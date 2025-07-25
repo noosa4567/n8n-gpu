@@ -44,8 +44,9 @@ RUN apt-get update \
       fonts-liberation lsb-release wget xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
  && rm -rf /var/lib/apt/lists/*
 
-# 4) Add PPA and install Chromium deb (non-Snap version for Ubuntu 20.04)
-RUN add-apt-repository ppa:savoury1/chromium -y \
+# 4) Add PPAs and install Chromium deb (non-Snap version for Ubuntu 20.04)
+RUN add-apt-repository ppa:savoury1/pipewire -y \
+ && add-apt-repository ppa:savoury1/chromium -y \
  && apt-get update \
  && apt-get install -y --no-install-recommends chromium-browser \
  && rm -rf /var/lib/apt/lists/*
