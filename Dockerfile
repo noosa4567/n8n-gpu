@@ -73,15 +73,19 @@ RUN npm install -g \
       ajv@8.17.1 \
       --legacy-peer-deps \
  && npm cache clean --force \
- && chown -R node:node /root/.cache/puppeteer /usr/local/lib/node_modules \
- && chown -R node:node "$(npm root -g)"
+ && \
+    # fix ownership of Puppeteer cache under $HOME
+    chown -R node:node "$HOME/.cache/puppeteer" \
+ && \
+    # fix ownership of the global npm modules directory
+    chown -R node:node "$(npm root -g)"
 
-# 8) Install Whisper & tokenizer, then pre-download "base" model (with retry; updated pin to valid latest)
+# 8) Install Whisper & tokenizer, then pre-download “base” model (with retry)
 RUN pip3 install --no-cache-dir tiktoken openai-whisper==20250625 \
  && pip3 cache purge \
  && mkdir -p "${WHISPER_MODEL_PATH}" \
- && (python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" || \
-     (sleep 5 && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])")) \
+ && (python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
+     || (sleep 5 && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])")) \
  && chown -R node:node "${WHISPER_MODEL_PATH}"
 
 # 9) Pre-create & chown runtime dirs (n8n cache, Puppeteer cache, shared media)
@@ -97,7 +101,7 @@ RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
      && (echo "⚠️  unresolved FFmpeg libs" >&2 && exit 1) \
      || echo "✅ FFmpeg libs OK"
 
-# 11) Initialize Conda for non-root 'node' user (sets up .bashrc with PATH and activation)
+# 11) Initialize Conda for non-root ‘node’ user (sets up .bashrc)
 RUN su - node -c "/opt/conda/bin/conda init bash" \
  && chown node:node "$HOME/.bashrc"
 
@@ -105,7 +109,7 @@ RUN su - node -c "/opt/conda/bin/conda init bash" \
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:5678/healthz || exit 1
 
-# 13) Switch to non-root, expose port & start n8n in server ("start") mode
+# 13) Switch to non-root, expose port & start n8n in server mode
 USER node
 WORKDIR $HOME
 EXPOSE 5678
