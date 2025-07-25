@@ -38,7 +38,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && rm -rf /var/lib/apt/lists/*
 
 # 5) Globally install n8n, Puppeteer (bundled Chromium),
-#    the community node, and ajv (peer) so OpenAPI validator works
+#    the community node, and ajv (peer) so OpenAPI validator works so global modules are in search path
 RUN npm install -g \
       n8n@latest \
       puppeteer@23.11.1 \
@@ -74,5 +74,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=30s \
 USER node
 WORKDIR $HOME
 EXPOSE 5678
-ENTRYPOINT ["tini","--","n8n"]
-CMD ["start"]
+ENTRYPOINT ["tini","--","n8n","start"]
+CMD []
