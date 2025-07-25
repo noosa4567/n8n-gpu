@@ -28,7 +28,7 @@ RUN groupadd -r node \
 # 2) Disable NVIDIA/CUDA repos to prevent mirror sync issues during apt-get update
 RUN rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia*
 
-# 3) Install system deps (added libfreetype6 for Chrome/FFmpeg font support)
+# 3) Install system deps (added all Puppeteer-recommended for Chrome)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini git curl ca-certificates gnupg python3-pip xz-utils \
@@ -41,7 +41,7 @@ RUN apt-get update \
       libatk-bridge2.0-0 libatk1.0-0 libcairo2 libcups2 libdbus-1-3 libexpat1 \
       libfontconfig1 libgbm1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 \
       libpangocairo-1.0-0 libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
-      fonts-liberation lsb-release wget xdg-utils libfreetype6 \
+      fonts-liberation lsb-release wget xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
  && rm -rf /var/lib/apt/lists/*
 
 # 4) Install Google Chrome Stable (for Puppeteer)
@@ -55,13 +55,20 @@ RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
       google-chrome-stable \
  && rm -rf /var/lib/apt/lists/*
 
-# 5) Copy GPU-enabled FFmpeg and libraries, rebuild linker cache, then remove conflicting libs
+# 5) Copy GPU-enabled FFmpeg and libraries, rebuild linker cache, then remove all conflicting libs
 COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
 RUN ldconfig \
- && rm -f /usr/local/lib/libfontconfig* /usr/local/lib/libfreetype* /usr/local/lib/libpango* /usr/local/lib/libfribidi* \
- && ldconfig 
+ && rm -f /usr/local/lib/libasound* /usr/local/lib/libatk* /usr/local/lib/libatspi* /usr/local/lib/libcairo* /usr/local/lib/libcups* \
+    /usr/local/lib/libdbus* /usr/local/lib/libexpat* /usr/local/lib/libfontconfig* /usr/local/lib/libgbm* /usr/local/lib/libglib* \
+    /usr/local/lib/libgtk* /usr/local/lib/libnspr* /usr/local/lib/libnss* /usr/local/lib/libpango* /usr/local/lib/libstdc++* \
+    /usr/local/lib/libx11* /usr/local/lib/libxcb* /usr/local/lib/libxcomposite* /usr/local/lib/libxcursor* /usr/local/lib/libxdamage* \
+    /usr/local/lib/libxext* /usr/local/lib/libxfixes* /usr/local/lib/libxi* /usr/local/lib/libxrandr* /usr/local/lib/libxrender* \
+    /usr/local/lib/libxss* /usr/local/lib/libxtst* /usr/local/lib/libharfbuzz* /usr/local/lib/libfribidi* /usr/local/lib/libthai* \
+    /usr/local/lib/libdatrie* /usr/local/lib/libdrm* /usr/local/lib/libwayland* /usr/local/lib/libEGL* /usr/local/lib/libGLES* \
+    /usr/local/lib/libglapi* /usr/local/lib/libva* /usr/local/lib/libvdpau* /usr/local/lib/libsndio* /usr/local/lib/libfreetype* \
+ && ldconfig
 
 # 6) Install Node.js 20 & npm
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
