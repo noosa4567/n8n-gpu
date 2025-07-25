@@ -75,4 +75,4 @@ USER node
 WORKDIR $HOME
 EXPOSE 5678
 ENTRYPOINT ["tini","--","n8n"]
-CMD []
+CMD ["start"]
