@@ -11,22 +11,23 @@ FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 
 ARG DEBIAN_FRONTEND=noninteractive
+
 ENV TZ=Australia/Brisbane \
     HOME=/home/node \
     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/nvidia/nvidia:/usr/local/nvidia/nvidia.u18.04 \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PATH="/opt/conda/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:${PATH}"
 
-# 1) Create node user (UID 999) in video group for GPU access & n8n config dir
+# 1) Create node@999 in video group & n8n home
 RUN groupadd -r node \
  && useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node \
  && mkdir -p "$HOME/.n8n" \
  && chown -R node:node "$HOME"
 
-# 2) Disable NVIDIA/CUDA repos to prevent mirror sync issues during apt-get update
+# 2) Drop any NVIDIA repo to avoid mirror mismatches
 RUN rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia*
 
-# 3) Install system deps (all Puppeteer-recommended, plus software-properties-common if needed; no PPA here)
+# 3) Install system libs Puppeteer & FFmpeg need
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini git curl ca-certificates gnupg python3-pip xz-utils software-properties-common \
@@ -42,74 +43,64 @@ RUN apt-get update \
       fonts-liberation lsb-release wget xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
  && rm -rf /var/lib/apt/lists/*
 
-# 4) No Chromium install here—Puppeteer will download its bundled version in #7
-
-# 5) Copy GPU-enabled FFmpeg and libraries, rebuild linker cache, then remove all conflicting libs
-COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
+# 4) Copy GPU-accelerated FFmpeg and update linker cache
+COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
 RUN ldconfig \
- && rm -f /usr/local/lib/libasound* /usr/local/lib/libatk* /usr/local/lib/libatspi* /usr/local/lib/libcairo* /usr/local/lib/libcups* \
-    /usr/local/lib/libdbus* /usr/local/lib/libexpat* /usr/local/lib/libfontconfig* /usr/local/lib/libgbm* /usr/local/lib/libglib* \
-    /usr/local/lib/libgtk* /usr/local/lib/libnspr* /usr/local/lib/libnss* /usr/local/lib/libpango* /usr/local/lib/libstdc++* \
-    /usr/local/lib/libx11* /usr/local/lib/libxcb* /usr/local/lib/libxcomposite* /usr/local/lib/libxcursor* /usr/local/lib/libxdamage* \
-    /usr/local/lib/libxext* /usr/local/lib/libxfixes* /usr/local/lib/libxi* /usr/local/lib/libxrandr* /usr/local/lib/libxrender* \
-    /usr/local/lib/libxss* /usr/local/lib/libxtst* /usr/local/lib/libharfbuzz* /usr/local/lib/libfribidi* /usr/local/lib/libthai* \
-    /usr/local/lib/libdatrie* /usr/local/lib/libdrm* /usr/local/lib/libwayland* /usr/local/lib/libEGL* /usr/local/lib/libGLES* \
-    /usr/local/lib/libglapi* /usr/local/lib/libva* /usr/local/lib/libvdpau* /usr/local/lib/libsndio* /usr/local/lib/libfreetype* \
+ && rm -f /usr/local/lib/lib{asound,atk,atspi,cairo,cups,dbus,expat,fontconfig,gbm,glib,gtk,nspr,nss,pango,stdc++,x11,xcb,xcomposite,xcursor,xdamage,xext,xfixes,xi,xrandr,xrender,xss,xtst,harfbuzz,fribidi,thai,datrie,drm,wayland,EGL,GLES,glapi,va,vdpau,sndio,freetype}* \
  && ldconfig
 
-# 6) Install Node.js 20 & npm
+# 5) Install Node.js 20.x
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
 
-# 7) Globally install n8n, Puppeteer (downloads bundled Chromium), community node & ajv
-RUN npm install -g \
+# 6) Switch to root so we can move Puppeteer cache
+USER root
+
+# 7) Install n8n, Puppeteer (download Chromium), community node & ajv
+RUN mkdir -p /home/node/.cache/puppeteer \
+ && npm install -g \
       n8n@1.104.1 \
       puppeteer@24.15.0 \
       n8n-nodes-puppeteer \
       ajv@8.17.1 \
       --legacy-peer-deps \
  && npm cache clean --force \
- && \
-    # fix ownership of Puppeteer cache under $HOME
-    chown -R node:node "$HOME/.cache/puppeteer" \
- && \
-    # fix ownership of the global npm modules directory
-    chown -R node:node "$(npm root -g)"
+ && mv /root/.cache/puppeteer/* /home/node/.cache/puppeteer/ 2>/dev/null || true \
+ && chown -R node:node /home/node/.cache/puppeteer "$(npm root -g)"
 
-# 8) Install Whisper & tokenizer, then pre-download “base” model (with retry)
+# 8) Install Whisper & tokenizer, pre-download base model
 RUN pip3 install --no-cache-dir tiktoken openai-whisper==20250625 \
  && pip3 cache purge \
  && mkdir -p "${WHISPER_MODEL_PATH}" \
- && (python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
-     || (sleep 5 && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])")) \
+ && (python3 -c "import whisper, os; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
+      || (sleep 5 && python3 -c "import whisper, os; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])")) \
  && chown -R node:node "${WHISPER_MODEL_PATH}"
 
-# 9) Pre-create & chown runtime dirs (n8n cache, Puppeteer cache, shared media)
+# 9) Prepare runtime dirs & ownership
 RUN mkdir -p \
       "$HOME/.cache/n8n/public" \
-      "$HOME/.cache/puppeteer" \
       /data/shared/{videos,audio,transcripts} \
  && chown -R node:node "$HOME" /data/shared \
  && chmod -R 770 /data/shared "$HOME/.cache"
 
-# 10) Verify FFmpeg linkage at build time
+# 10) Sanity‐check FFmpeg linkage
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
-     && (echo "⚠️  unresolved FFmpeg libs" >&2 && exit 1) \
+     && (echo "❌ unresolved FFmpeg libs" >&2 && exit 1) \
      || echo "✅ FFmpeg libs OK"
 
-# 11) Initialize Conda for non-root ‘node’ user (sets up .bashrc)
+# 11) Init Conda for non-root user
 RUN su - node -c "/opt/conda/bin/conda init bash" \
  && chown node:node "$HOME/.bashrc"
 
-# 12) Healthcheck for n8n readiness
+# 12) Healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:5678/healthz || exit 1
 
-# 13) Switch to non-root, expose port & start n8n in server mode
+# 13) Final drop to non-root & launch
 USER node
 WORKDIR $HOME
 EXPOSE 5678
