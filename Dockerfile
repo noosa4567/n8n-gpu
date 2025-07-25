@@ -13,11 +13,11 @@ FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Australia/Brisbane \
     HOME=/home/node \
-    LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64 \
+    LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/nvidia/nvidia:/usr/local/nvidia/nvidia.u18.04 \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable \
-    PATH="/opt/conda/bin:${PATH}"
+    PATH="/opt/conda/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:${PATH}"
 
 # 1) Create node user (UID 999) in video group for GPU access & n8n config dir
 RUN groupadd -r node \
@@ -28,11 +28,7 @@ RUN groupadd -r node \
 # 2) Disable NVIDIA/CUDA repos to prevent mirror sync issues during apt-get update
 RUN rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia*
 
-# 3) Install system deps:
-#    • tini (PID 1)
-#    • Python tooling
-#    • all XCB/libs that ffmpeg + Chrome need (including libxcb-shape0)
-#    • Chrome Puppeteer dependencies
+# 3) Install system deps (added libfreetype6 for Chrome/FFmpeg font support)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini git curl ca-certificates gnupg python3-pip xz-utils \
@@ -45,7 +41,7 @@ RUN apt-get update \
       libatk-bridge2.0-0 libatk1.0-0 libcairo2 libcups2 libdbus-1-3 libexpat1 \
       libfontconfig1 libgbm1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 \
       libpangocairo-1.0-0 libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
-      fonts-liberation lsb-release wget xdg-utils \
+      fonts-liberation lsb-release wget xdg-utils libfreetype6 \
  && rm -rf /var/lib/apt/lists/*
 
 # 4) Install Google Chrome Stable (for Puppeteer)
@@ -59,11 +55,12 @@ RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
       google-chrome-stable \
  && rm -rf /var/lib/apt/lists/*
 
-# 5) Copy GPU-enabled FFmpeg and libraries, rebuild linker cache
+# 5) Copy GPU-enabled FFmpeg and libraries, rebuild linker cache, then remove conflicting libs
 COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
-RUN ldconfig
+RUN ldconfig \
+ && rm -f /usr/local/lib/libfontconfig* /usr/local/lib/libfreetype*
 
 # 6) Install Node.js 20 & npm
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
@@ -72,7 +69,6 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && rm -rf /var/lib/apt/lists/*
 
 # 7) Globally install n8n, Puppeteer (uses system Chrome), community node & ajv
-#    Adding ajv peer ensures express-openapi-validator loads correctly.
 RUN npm install -g \
       n8n@1.104.1 \
       puppeteer@24.15.0 \
@@ -82,8 +78,8 @@ RUN npm install -g \
  && npm cache clean --force \
  && chown -R node:node "$(npm root -g)"
 
-# 8) Install Whisper & tokenizer, then pre-download "base" model (with retry)
-RUN pip3 install --no-cache-dir tiktoken openai-whisper==20240930 \
+# 8) Install Whisper & tokenizer, then pre-download "base" model (with retry; updated pin to valid latest)
+RUN pip3 install --no-cache-dir tiktoken openai-whisper==20250625 \
  && pip3 cache purge \
  && mkdir -p "${WHISPER_MODEL_PATH}" \
  && (python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" || \
