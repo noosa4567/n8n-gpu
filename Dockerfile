@@ -1,44 +1,47 @@
 ###############################################################################
-# Stage 1: Pre-built GPU-accelerated FFmpeg (CUDA 11.8)
+# 1) Pre-built GPU-accelerated FFmpeg (CUDA 11.8)
 ###############################################################################
 FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 
 ###############################################################################
-# Stage 2: Runtime with CUDA, PyTorch, Whisper, n8n & Puppeteer
+# 2) Runtime: CUDA 11.8 Ubuntu 22.04, PyTorch, n8n, Whisper, FFmpeg & Puppeteer
 ###############################################################################
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
+
+# ensure correct home & whisper path
 ENV HOME=/home/node \
     TZ=Australia/Brisbane \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models
 
-# 1) Create non-root user
-RUN useradd -m -u 1000 -s /bin/bash node
+# 2.1) Create non-root “node” user **with UID=999** to match your NAS
+RUN useradd -m -u 999 -s /bin/bash node
 
-# 2) Install system deps + Puppeteer libraries
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      tini git xz-utils curl ca-certificates python3 python3-pip \
+# 2.2) Install system deps + Puppeteer libraries
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      tini git curl ca-certificates python3 python3-pip xz-utils \
       libnss3 libxss1 libasound2 libcups2 libatk-bridge2.0-0 libgtk-3-0 \
       libxcomposite1 libxdamage1 libgbm1 libpangocairo-1.0-0 libpango-1.0-0 \
       libxrandr2 libxrender1 libxi6 libxtst6 libxcursor1 \
       fonts-liberation libfribidi0 libharfbuzz0b libthai0 libdatrie1 \
  && rm -rf /var/lib/apt/lists/*
 
-# 3) Copy GPU-enabled FFmpeg from builder
+# 2.3) Copy GPU-enabled FFmpeg & libs
 COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
 RUN ldconfig
 
-# 4) Install Node.js 20.x
+# 2.4) Install Node.js 20.x (with npm)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
 
-# 5) Globally install n8n, Puppeteer (bundled Chromium),
-#    the community node, and ajv (peer) so OpenAPI validator works so global modules are in search path
+# 2.5) Globally install n8n + Puppeteer (bundled Chromium) +
+#      community node + ajv peer so OpenAPI validator works
 RUN npm install -g \
       n8n@latest \
       puppeteer@23.11.1 \
@@ -46,19 +49,20 @@ RUN npm install -g \
       ajv@8.17.1 \
       --legacy-peer-deps \
  && npm cache clean --force \
+ # ensure global modules are owned by node (UID 999)
  && chown -R node:node /usr/lib/node_modules
 
-# 6) Install PyTorch+CUDA, Whisper, tiktoken and pre-download model
+# 2.6) Whisper + PyTorch (GPU) + tiktoken + pre-download “base” model
 RUN pip3 install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cu118 \
       torch==2.1.0+cu118 numpy==1.26.3 \
  && pip3 install --no-cache-dir tiktoken openai-whisper==20240930 \
- && mkdir -p "$WHISPER_MODEL_PATH" \
- && python3 -c "import whisper, os; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
+ && mkdir -p "${WHISPER_MODEL_PATH}" \
+ && python3 -c "import whisper,os; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
  && rm -rf /root/.cache \
- && chown -R node:node "$WHISPER_MODEL_PATH"
+ && chown -R node:node "${WHISPER_MODEL_PATH}"
 
-# 7) Pre-create & chown runtime dirs so ‘node’ never hits EACCES
+# 2.7) Pre-create & chown runtime dirs so node never hits EACCES
 RUN mkdir -p \
       "$HOME/.n8n" \
       "$HOME/.cache/n8n/public" \
@@ -66,13 +70,15 @@ RUN mkdir -p \
       /data/shared/{videos,audio,transcripts} \
  && chown -R node:node "$HOME" /data/shared
 
-# 8) Healthcheck
+# 2.8) Healthcheck for n8n
 HEALTHCHECK --interval=30s --timeout=3s --start-period=30s \
   CMD curl -f http://localhost:5678/healthz || exit 1
 
-# 9) Switch to non-root, expose port & launch n8n
+# 2.9) Switch to non-root, expose port & launch n8n
 USER node
 WORKDIR $HOME
 EXPOSE 5678
+
+# >>> Crucially include the “start” subcommand <<< 
 ENTRYPOINT ["tini","--","n8n","start"]
 CMD []
