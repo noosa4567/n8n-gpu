@@ -15,8 +15,6 @@ ENV TZ=Australia/Brisbane \
     HOME=/home/node \
     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/nvidia/nvidia:/usr/local/nvidia/nvidia.u18.04 \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
-    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
     PATH="/opt/conda/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:${PATH}"
 
 # 1) Create node user (UID 999) in video group for GPU access & n8n config dir
@@ -28,7 +26,7 @@ RUN groupadd -r node \
 # 2) Disable NVIDIA/CUDA repos to prevent mirror sync issues during apt-get update
 RUN rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia*
 
-# 3) Install system deps (all Puppeteer-recommended for Chromium, plus software-properties-common for PPA)
+# 3) Install system deps (all Puppeteer-recommended, plus software-properties-common if needed; no PPA here)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini git curl ca-certificates gnupg python3-pip xz-utils software-properties-common \
@@ -44,12 +42,7 @@ RUN apt-get update \
       fonts-liberation lsb-release wget xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
  && rm -rf /var/lib/apt/lists/*
 
-# 4) Add PPAs and install Chromium deb (non-Snap version for Ubuntu 20.04)
-RUN add-apt-repository ppa:savoury1/pipewire -y \
- && add-apt-repository ppa:savoury1/chromium -y \
- && apt-get update \
- && apt-get install -y --no-install-recommends chromium-browser \
- && rm -rf /var/lib/apt/lists/*
+# 4) No Chromium install here—Puppeteer will download its bundled version in #7
 
 # 5) Copy GPU-enabled FFmpeg and libraries, rebuild linker cache, then remove all conflicting libs
 COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
@@ -72,7 +65,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
 
-# 7) Globally install n8n, Puppeteer (uses system Chrome), community node & ajv
+# 7) Globally install n8n, Puppeteer (downloads bundled Chromium), community node & ajv
 RUN npm install -g \
       n8n@1.104.1 \
       puppeteer@24.15.0 \
@@ -80,6 +73,7 @@ RUN npm install -g \
       ajv@8.17.1 \
       --legacy-peer-deps \
  && npm cache clean --force \
+ && chown -R node:node /root/.cache/puppeteer /usr/local/lib/node_modules \
  && chown -R node:node "$(npm root -g)"
 
 # 8) Install Whisper & tokenizer, then pre-download "base" model (with retry; updated pin to valid latest)
