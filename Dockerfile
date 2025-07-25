@@ -16,7 +16,7 @@ ENV TZ=Australia/Brisbane \
     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/nvidia/nvidia:/usr/local/nvidia/nvidia.u18.04 \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
     PATH="/opt/conda/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:${PATH}"
 
 # 1) Create node user (UID 999) in video group for GPU access & n8n config dir
@@ -28,7 +28,7 @@ RUN groupadd -r node \
 # 2) Disable NVIDIA/CUDA repos to prevent mirror sync issues during apt-get update
 RUN rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia*
 
-# 3) Install system deps (added all Puppeteer-recommended for Chrome)
+# 3) Install system deps (all Puppeteer-recommended for Chromium, verified for Ubuntu 20.04 compatibility)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini git curl ca-certificates gnupg python3-pip xz-utils \
@@ -44,15 +44,9 @@ RUN apt-get update \
       fonts-liberation lsb-release wget xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
  && rm -rf /var/lib/apt/lists/*
 
-# 4) Install Google Chrome Stable (for Puppeteer)
-RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
-     | gpg --dearmor -o /usr/share/keyrings/google-chrome-keyring.gpg \
- && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome-keyring.gpg] \
-     http://dl.google.com/linux/chrome/deb/ stable main" \
-     > /etc/apt/sources.list.d/google-chrome.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends \
-      google-chrome-stable \
+# 4) Install system Chromium (compatible with Ubuntu 20.04)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends chromium-browser \
  && rm -rf /var/lib/apt/lists/*
 
 # 5) Copy GPU-enabled FFmpeg and libraries, rebuild linker cache, then remove all conflicting libs
