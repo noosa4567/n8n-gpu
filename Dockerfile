@@ -28,10 +28,10 @@ RUN groupadd -r node \
 # 2) Disable NVIDIA/CUDA repos to prevent mirror sync issues during apt-get update
 RUN rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia*
 
-# 3) Install system deps (all Puppeteer-recommended for Chromium, verified for Ubuntu 20.04 compatibility)
+# 3) Install system deps (all Puppeteer-recommended for Chromium, plus software-properties-common for PPA)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      tini git curl ca-certificates gnupg python3-pip xz-utils \
+      tini git curl ca-certificates gnupg python3-pip xz-utils software-properties-common \
       libsndio7.0 libasound2 \
       libva2 libva-x11-2 libva-drm2 libva-wayland2 \
       libvdpau1 \
@@ -44,8 +44,9 @@ RUN apt-get update \
       fonts-liberation lsb-release wget xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
  && rm -rf /var/lib/apt/lists/*
 
-# 4) Install system Chromium (compatible with Ubuntu 20.04)
-RUN apt-get update \
+# 4) Add PPA and install Chromium deb (non-Snap version for Ubuntu 20.04)
+RUN add-apt-repository ppa:savoury1/chromium -y \
+ && apt-get update \
  && apt-get install -y --no-install-recommends chromium-browser \
  && rm -rf /var/lib/apt/lists/*
 
