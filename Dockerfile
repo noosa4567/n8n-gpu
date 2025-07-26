@@ -6,9 +6,9 @@
 FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 
 ###############################################################################
-# Stage 2 • Runtime: CUDA 11.8 PyTorch 2.1, n8n, Whisper, FFmpeg & Puppeteer
+# Stage 2 • Runtime: CUDA 11.8 Ubuntu 22.04, n8n, Whisper, FFmpeg & Puppeteer
 ###############################################################################
-FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
+FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -28,7 +28,7 @@ RUN groupadd -r node \
 # 2) Drop any NVIDIA repo to avoid mirror mismatches
 RUN rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia*
 
-# 3) Install system libs Puppeteer & FFmpeg need
+# 3) Install system deps (all Puppeteer & FFmpeg need)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini git curl ca-certificates gnupg python3-pip xz-utils software-properties-common \
@@ -48,9 +48,7 @@ RUN apt-get update \
 COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
-RUN ldconfig \
- && rm -f /usr/local/lib/lib{asound,atk,atspi,cairo,cups,dbus,expat,fontconfig,gbm,glib,gtk,nspr,nss,pango,stdc++,x11,xcb,xcomposite,xcursor,xdamage,xext,xfixes,xi,xrandr,xrender,xss,xtst,harfbuzz,fribidi,thai,datrie,drm,wayland,EGL,GLES,glapi,va,vdpau,sndio,freetype}* \
- && ldconfig
+RUN ldconfig
 
 # 5) Install Node.js 20.x
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
@@ -62,18 +60,20 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 RUN mkdir -p /home/node/.cache/puppeteer
 
 # 7) Globally install n8n, Puppeteer (download bundled Chromium), community node & ajv
-# Updated to specify Puppeteer v24.14.0 (which pulls Chrome 138.0.7204.157) so it finds the Chrome it’s looking for
 RUN npm install -g --unsafe-perm \
       n8n@1.104.1 \
-      puppeteer@24.14.0 \
-      n8n-nodes-puppeteer@1.4.1 \
+      puppeteer@24.15.0 \
+      n8n-nodes-puppeteer \
       ajv@8.17.1 \
       --legacy-peer-deps \
-  && npm cache clean --force \
-  && chown -R node:node /home/node/.cache/puppeteer "$(npm root -g)"
+ && npm cache clean --force \
+ && chown -R node:node /home/node/.cache/puppeteer "$(npm root -g)"
 
-# 8) Install Whisper & tokenizer, pre-download base model (with retry)
-RUN pip3 install --no-cache-dir tiktoken openai-whisper==20250625 \
+# 8) Install PyTorch, Whisper & tokenizer, pre-download base model (with retry)
+RUN pip3 install --no-cache-dir \
+      --index-url https://download.pytorch.org/whl/cu118 \
+      torch==2.1.0+cu118 numpy==1.26.3 \
+ && pip3 install --no-cache-dir tiktoken openai-whisper==20250625 \
  && pip3 cache purge \
  && mkdir -p "${WHISPER_MODEL_PATH}" \
  && (python3 -c "import whisper, os; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" || \
