@@ -62,7 +62,6 @@ RUN apt-get update \
 # 8) Install NVIDIA codec SDK headers
 RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git \
  && cd nv-codec-headers \
- && git checkout n11.1.5.4 \
  && make \
  && make install \
  && cd .. \
