@@ -92,10 +92,11 @@ RUN apt-get purge -y \
  && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*
 
-# 10) Install Node.js 20.x
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
- && apt-get update \
+# 10) Install Node.js 20.x (use bash explicitly)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x -o nodesource_setup.sh \
+ && bash nodesource_setup.sh \
  && apt-get install -y --no-install-recommends nodejs \
+ && rm nodesource_setup.sh \
  && rm -rf /var/lib/apt/lists/*
 
 # 11) Prepare Puppeteer cache
