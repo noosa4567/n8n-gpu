@@ -47,7 +47,9 @@ RUN apt-get update \
 COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
-RUN ldconfig
+
+# REMOVE older FriBidi lib to avoid symbol conflicts (use system lib instead)
+RUN rm -f /usr/local/lib/libfribidi.so.0* && ldconfig
 
 # 5) Install Node.js 20.x
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
