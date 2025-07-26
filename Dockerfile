@@ -50,24 +50,17 @@ RUN wget -qO /tmp/libsndio6.1.deb \
  && dpkg -i /tmp/libsndio6.1.deb \
  && rm /tmp/libsndio6.1.deb
 
-# 7) Install FFmpeg build dependencies (CUDA 11.8)
+# 7) Install FFmpeg build dependencies (CUDA 11.8 + NVENC support)
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      build-essential yasm cmake libtool libc6-dev libnuma-dev pkg-config git wget \
+      build-essential yasm cmake libtool libc6-dev libnuma-dev pkg-config \
+      git wget curl ca-certificates \
       libass-dev libfreetype6-dev libfontconfig-dev libxml2-dev \
       libvorbis-dev libopus-dev libx264-dev libx265-dev libmp3lame-dev \
-      nvidia-cuda-toolkit \
+      nvidia-cuda-toolkit libnvidia-encode1 libnvidia-encode-dev \
  && rm -rf /var/lib/apt/lists/*
 
-# 8) Install NVIDIA codec SDK headers
-RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git \
- && cd nv-codec-headers \
- && make \
- && make install \
- && cd .. \
- && rm -rf nv-codec-headers
-
-# 9) Build and install FFmpeg 5.1 with CUDA 11.8
+# 8) Build and install FFmpeg 5.1 with CUDA 11.8
 RUN git clone https://git.ffmpeg.org/ffmpeg.git -b n5.1.4 \
  && cd ffmpeg \
  && ./configure \
@@ -84,26 +77,26 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git -b n5.1.4 \
  && rm -rf ffmpeg \
  && ldconfig
 
-# 10) Clean up build dependencies
+# 9) Clean up build dependencies
 RUN apt-get purge -y \
       build-essential yasm cmake libtool libnuma-dev pkg-config git wget \
       libass-dev libfreetype6-dev libfontconfig-dev libxml2-dev \
       libvorbis-dev libopus-dev libx264-dev libx265-dev libmp3lame-dev \
-      nvidia-cuda-toolkit \
+      nvidia-cuda-toolkit libnvidia-encode-dev \
  && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*
 
-# 11) Install Node.js 20.x
+# 10) Install Node.js 20.x
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
 
-# 12) Prepare Puppeteer cache
+# 11) Prepare Puppeteer cache
 RUN mkdir -p "$PUPPETEER_CACHE_DIR" \
  && chown node:node "$PUPPETEER_CACHE_DIR"
 
-# 13) Globally install n8n + Puppeteer
+# 12) Globally install n8n + Puppeteer
 RUN npm install -g --unsafe-perm \
       n8n@1.104.1 \
       puppeteer@24.14.0 \
@@ -113,7 +106,7 @@ RUN npm install -g --unsafe-perm \
  && npm cache clean --force \
  && chown -R node:node "$PUPPETEER_CACHE_DIR" "$(npm root -g)"
 
-# 14) Install Whisper + CUDA
+# 13) Install Whisper + CUDA
 RUN pip3 install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cu118 \
       torch==2.1.0+cu118 numpy==1.26.3 \
@@ -122,19 +115,19 @@ RUN pip3 install --no-cache-dir \
  && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
  && chown -R node:node "$WHISPER_MODEL_PATH"
 
-# 15) Prepare shared media + n8n runtime dirs
+# 14) Prepare shared media + n8n runtime dirs
 RUN mkdir -p \
       "$HOME/.cache/n8n/public" \
       /data/shared/{videos,audio,transcripts} \
  && chown -R node:node "$HOME" /data/shared \
  && chmod -R 770 /data/shared "$HOME/.cache"
 
-# 16) FFmpeg sanity check
+# 15) FFmpeg sanity check
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
      && (echo "❌ unresolved FFmpeg libs" >&2 && exit 1) \
      || echo "✅ FFmpeg libs OK"
 
-# 17) Run n8n as non-root
+# 16) Run n8n as non-root
 USER node
 WORKDIR $HOME
 EXPOSE 5678
