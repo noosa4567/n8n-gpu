@@ -26,7 +26,7 @@ RUN groupadd -r node \
 # 2) Drop leftover NVIDIA APT lists (avoids hash mismatches)
 RUN rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia*
 
-# 3) Install system libs for FFmpeg, Whisper audio I/O, Puppeteer
+# 3) Install system libs for FFmpeg, Whisper audio I/O, Puppeteer **+ SDL2**
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini git curl ca-certificates gnupg \
@@ -41,14 +41,13 @@ RUN apt-get update \
       libfontconfig1 libgbm1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 \
       libpangocairo-1.0-0 libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
       fonts-liberation lsb-release wget xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
+      **libsdl2-2.0-0** \
  && rm -rf /var/lib/apt/lists/*
 
-# 4) Copy in GPU-built FFmpeg and its libs
+# 4) Copy in GPU-built FFmpeg and its libs, clean up old FriBidi
 COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
-
-# REMOVE older FriBidi lib to avoid symbol conflicts (use system lib instead)
 RUN rm -f /usr/local/lib/libfribidi.so.0* && ldconfig
 
 # 5) Install Node.js 20.x
@@ -60,7 +59,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 # 6) Prep Puppeteer cache dir
 RUN mkdir -p /home/node/.cache/puppeteer
 
-# 7) Globally install n8n, Puppeteer@24.14.0 (bundles Chrome 138.0.7204.157), community node & ajv
+# 7) Globally install n8n, Puppeteer@24.14.0 (bundles Chrome 138), community node & ajv
 RUN npm install -g --unsafe-perm \
       n8n@1.104.1 \
       puppeteer@24.14.0 \
@@ -70,7 +69,7 @@ RUN npm install -g --unsafe-perm \
  && npm cache clean --force \
  && chown -R node:node /home/node/.cache/puppeteer "$(npm root -g)"
 
-# 8) Install PyTorch/CUDA wheels, Whisper & tokenizer, pre-download base model
+# 8) Install PyTorch/CUDA, Whisper & tokenizer, pre-download base model
 RUN pip3 install --no-cache-dir --index-url https://download.pytorch.org/whl/cu118 \
       torch==2.1.0+cu118 numpy==1.26.3 \
  && pip3 install --no-cache-dir tiktoken openai-whisper==20240930 \
