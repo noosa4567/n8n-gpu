@@ -54,7 +54,7 @@ RUN wget -qO /tmp/libsndio6.1.deb \
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       build-essential yasm cmake libtool libc6-dev libnuma-dev pkg-config git wget \
-      libass-dev libfreetype6-dev libharfbuzz-dev libfontconfig-dev libxml2-dev \
+      libass-dev libfreetype6-dev libfontconfig-dev libxml2-dev \
       libvorbis-dev libopus-dev libx264-dev libx265-dev libmp3lame-dev \
       nvidia-cuda-toolkit \
  && rm -rf /var/lib/apt/lists/*
@@ -74,7 +74,7 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git -b n5.1.4 \
       --prefix=/usr/local \
       --enable-gpl --enable-nonfree \
       --enable-cuda-nvcc --enable-libnpp --enable-cuvid --enable-nvdec --enable-nvenc \
-      --enable-libass --enable-libfreetype --enable-libharfbuzz --enable-libfontconfig \
+      --enable-libass --enable-libfreetype --enable-libfontconfig \
       --enable-libxml2 --enable-libvorbis --enable-libopus --enable-libx264 --enable-libx265 --enable-libmp3lame \
       --extra-cflags=-I/usr/local/cuda/include \
       --extra-ldflags=-L/usr/local/cuda/lib64 \
@@ -87,7 +87,7 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git -b n5.1.4 \
 # 10) Clean up build dependencies
 RUN apt-get purge -y \
       build-essential yasm cmake libtool libnuma-dev pkg-config git wget \
-      libass-dev libfreetype6-dev libharfbuzz-dev libfontconfig-dev libxml2-dev \
+      libass-dev libfreetype6-dev libfontconfig-dev libxml2-dev \
       libvorbis-dev libopus-dev libx264-dev libx265-dev libmp3lame-dev \
       nvidia-cuda-toolkit \
  && apt-get autoremove -y \
