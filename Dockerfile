@@ -1,26 +1,37 @@
 # syntax=docker/dockerfile:1
+
+###############################################################################
+# Stage 1 • Pre-built GPU-accelerated FFmpeg (CUDA 11.8)
+###############################################################################
 FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 
+###############################################################################
+# Stage 2 • Runtime: CUDA 11.8 Ubuntu 22.04, n8n, Whisper, FFmpeg & Puppeteer
+###############################################################################
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Australia/Brisbane \
     HOME=/home/node \
     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/nvidia/nvidia:/usr/local/nvidia/nvidia.u18.04 \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
-    PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
-    PATH="/opt/conda/bin:${PATH}"
+    PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer
 
+# 1) Create non-root 'node' user (UID 999) in 'video' group & prep its home
 RUN groupadd -r node \
  && useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node \
  && mkdir -p "$HOME/.n8n" \
  && chown -R node:node "$HOME"
 
-RUN rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia* \
- && apt-get update \
+# 2) Remove NVIDIA/CUDA APT lists to avoid mirror mismatches
+RUN rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia*
+
+# 3) Install system libs for FFmpeg (incl. old sndio), Whisper audio I/O, Puppeteer (incl. SDL2)
+RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       tini git curl ca-certificates gnupg wget \
       python3 python3-pip xz-utils \
-      libsndio7.0 libsndio6.1 libasound2 \
+      libsndio7.0 libasound2 libsdl2-2.0-0 \
       libva2 libva-x11-2 libva-drm2 libva-wayland2 \
       libvdpau1 \
       libxcb1 libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-render0 \
@@ -30,24 +41,34 @@ RUN rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia* \
       libfontconfig1 libgbm1 libegl1-mesa libgl1-mesa-dri libdrm2 \
       libglib2.0-0 libgtk-3-0 libnspr4 libnss3 \
       libpangocairo-1.0-0 libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
-      libsdl2-2.0-0 fonts-liberation lsb-release xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
+      fonts-liberation lsb-release xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
       libnvidia-egl-gbm1 \
  && rm -rf /var/lib/apt/lists/*
 
+# 3a) Pull in Bionic's libsndio6.1 for FFmpeg’s old dependency
+RUN wget -qO /tmp/libsndio6.1.deb \
+      http://security.ubuntu.com/ubuntu/pool/universe/s/sndio/libsndio6.1_1.1.0-3_amd64.deb \
+ && dpkg -i /tmp/libsndio6.1.deb \
+ && rm /tmp/libsndio6.1.deb
+
+# 4) Copy in GPU-accelerated FFmpeg & its libs, strip out vendored libfribidi
 COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
 COPY --from=ffmpeg /usr/local/lib/        /usr/local/lib/
-RUN rm -f /usr/local/lib/lib{fribidi,harfbuzz,pango}* \
+RUN rm -f /usr/local/lib/libfribidi.so.0* \
  && ldconfig
 
+# 5) Install Node.js 20.x
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /home/node/.cache/puppeteer \
- && chown node:node /home/node/.cache/puppeteer
+# 6) Prepare Puppeteer cache directory
+RUN mkdir -p "$PUPPETEER_CACHE_DIR" \
+ && chown node:node "$PUPPETEER_CACHE_DIR"
 
+# 7) Globally install n8n, Puppeteer@24.14.0 (Chrome 138), community node & ajv
 USER root
 RUN npm install -g --unsafe-perm \
       n8n@1.104.1 \
@@ -56,24 +77,30 @@ RUN npm install -g --unsafe-perm \
       ajv@8.17.1 \
       --legacy-peer-deps \
  && npm cache clean --force \
- && chown -R node:node /home/node/.cache/puppeteer "$(npm root -g)"
+ && chown -R node:node "$PUPPETEER_CACHE_DIR" "$(npm root -g)"
 
+# 8) Install PyTorch/CUDA wheels, Whisper & tokenizer, then pre-download the "base" model
 RUN pip3 install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cu118 \
       torch==2.1.0+cu118 numpy==1.26.3 \
- && pip3 install --no-cache-dir tiktoken openai-whisper==20240930 \
- && mkdir -p "${WHISPER_MODEL_PATH}" \
+ && pip3 install --no-cache-dir tiktoken openai-whisper \
+ && mkdir -p "$WHISPER_MODEL_PATH" \
  && python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
- && chown -R node:node "${WHISPER_MODEL_PATH}"
+ && chown -R node:node "$WHISPER_MODEL_PATH"
 
-RUN mkdir -p "$HOME/.cache/n8n/public" /data/shared/{videos,audio,transcripts} \
+# 9) Pre-create & chown runtime dirs (n8n cache, shared media)
+RUN mkdir -p \
+      "$HOME/.cache/n8n/public" \
+      /data/shared/{videos,audio,transcripts} \
  && chown -R node:node "$HOME" /data/shared \
  && chmod -R 770 /data/shared "$HOME/.cache"
 
+# 10) Sanity-check FFmpeg linkage
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" \
      && (echo "❌ unresolved FFmpeg libs" >&2 && exit 1) \
      || echo "✅ FFmpeg libs OK"
 
+# 11) Drop to non-root user & start n8n
 USER node
 WORKDIR $HOME
 EXPOSE 5678
