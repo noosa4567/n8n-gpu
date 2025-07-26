@@ -62,6 +62,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 RUN mkdir -p /home/node/.cache/puppeteer
 
 # 7) Globally install n8n, Puppeteer (download bundled Chromium), community node & ajv
+# Updated to specify Puppeteer v24.14.0 (which pulls Chrome 138.0.7204.157) so it finds the Chrome it’s looking for
 RUN npm install -g --unsafe-perm \
       n8n@1.104.1 \
       puppeteer@24.14.0 \  # Use Puppeteer v24.14.0 (Chrome 157) instead of 24.15.0
