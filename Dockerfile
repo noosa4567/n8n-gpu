@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential yasm cmake libtool libc6-dev libnuma-dev pkg-config git wget \
       libass-dev libfreetype6-dev libfontconfig-dev libxml2-dev \
       libvorbis-dev libopus-dev libx264-dev libx265-dev libmp3lame-dev && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* && \
     git clone https://github.com/FFmpeg/nv-codec-headers.git && \
     cd nv-codec-headers && \
     git checkout n11.1.5.3 && \
@@ -54,7 +55,7 @@ RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" && chown -R node:node "$HOME"
 
-# Add Mesa PPA for GBM fix
+# Add Mesa PPA
 RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common && \
     add-apt-repository ppa:oibaf/graphics-drivers -y && \
     apt-get update && apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -74,7 +75,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libpangocairo-1.0-0 libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
       fonts-liberation lsb-release xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
       libnvidia-egl-gbm1 && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Remove NVIDIA’s conflicting libgbm
 RUN rm -f /usr/local/nvidia/lib/libgbm.so.1 /usr/local/nvidia/lib64/libgbm.so.1
@@ -87,7 +88,7 @@ RUN wget -qO /tmp/libsndio6.1.deb http://security.ubuntu.com/ubuntu/pool/univers
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x -o nodesource_setup.sh && \
     bash nodesource_setup.sh && \
     apt-get install -y --no-install-recommends nodejs && \
-    rm nodesource_setup.sh && rm -rf /var/lib/apt/lists/*
+    rm nodesource_setup.sh && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install n8n, Puppeteer, Puppeteer nodes
 RUN npm install -g --unsafe-perm \
@@ -100,14 +101,18 @@ RUN npm install -g --unsafe-perm \
     mkdir -p "$PUPPETEER_CACHE_DIR" && \
     chown -R node:node "$PUPPETEER_CACHE_DIR" "$(npm root -g)"
 
-# Install Whisper + CUDA
+# Install PyTorch and numpy (split to isolate large layer)
 RUN pip3 install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cu118 \
       torch==2.1.0+cu118 numpy==1.26.3 && \
-    pip3 install --no-cache-dir tiktoken openai-whisper && \
+    rm -rf /root/.cache/pip/*
+
+# Install remaining Whisper deps and model
+RUN pip3 install --no-cache-dir tiktoken openai-whisper && \
     mkdir -p "$WHISPER_MODEL_PATH" && \
     python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" && \
-    chown -R node:node "$WHISPER_MODEL_PATH"
+    chown -R node:node "$WHISPER_MODEL_PATH" && \
+    rm -rf /root/.cache/pip/*
 
 # Create runtime directories
 RUN mkdir -p "$HOME/.cache/n8n/public" /data/shared/{videos,audio,transcripts} && \
