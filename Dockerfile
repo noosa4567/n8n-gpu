@@ -55,22 +55,27 @@ RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" && chown -R node:node "$HOME"
 
-# Install all runtime dependencies in one pass (consolidated)
+# Add Mesa PPA for latest libgbm/libegl
+RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common && \
+    add-apt-repository ppa:oibaf/graphics-drivers -y && \
+    apt-get update && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
+
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      software-properties-common tini git curl ca-certificates gnupg wget xz-utils \
+      tini git curl ca-certificates gnupg wget xz-utils \
       python3 python3-pip binutils libglib2.0-bin \
       libsndio7.0 libasound2 libsdl2-2.0-0 libxv1 \
       libva2 libva-x11-2 libva-drm2 libva-wayland2 \
       libvdpau1 libxcb1 libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-render0 \
-      libx11-6 libx11-xcb1 libxi6 libxcursor1 \
+      libx11-6 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 \
+      libxrender1 libxss1 libxtst6 libxi6 libxcursor1 \
       libatk-bridge2.0-0 libatk1.0-0 libcairo2 libcups2 libdbus-1-3 libexpat1 \
       libfontconfig1 libgbm1 libegl1-mesa libgl1-mesa-dri libdrm2 \
       libglib2.0-0 libgtk-3-0 libnspr4 libnss3 \
       libpangocairo-1.0-0 libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
       fonts-liberation lsb-release xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
       libnvidia-egl-gbm1 && \
-    add-apt-repository ppa:oibaf/graphics-drivers -y && \
-    apt-get update && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
+    apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/* /usr/share/man/* /usr/share/doc/*
 
 # Remove NVIDIA’s conflicting libgbm
 RUN rm -f /usr/local/nvidia/lib/libgbm.so.1 /usr/local/nvidia/lib64/libgbm.so.1 && rm -rf /tmp/*
@@ -94,25 +99,22 @@ RUN pip3 install --no-cache-dir \
       torch==2.1.0+cu118 numpy==1.26.3 && \
     rm -rf /root/.cache/pip/* /tmp/*
 
-# Install Whisper and preload model
+# Install Whisper (without preloading model)
 RUN pip3 install --no-cache-dir tiktoken openai-whisper && \
     mkdir -p "$WHISPER_MODEL_PATH" && \
-    python3 -c "import whisper; whisper.load_model('base', download_root='$WHISPER_MODEL_PATH')" && \
     chown -R node:node "$WHISPER_MODEL_PATH" && \
     rm -rf /root/.cache/pip/* /tmp/*
 
-# Install n8n and Puppeteer nodes (no global puppeteer)
+# Install n8n, Puppeteer, Puppeteer nodes
 RUN npm install -g --unsafe-perm \
       n8n@1.104.1 \
+      puppeteer@24.14.0 \
       n8n-nodes-puppeteer@1.4.1 \
       ajv@8.17.1 \
       --legacy-peer-deps && \
     npm cache clean --force && \
     mkdir -p "$PUPPETEER_CACHE_DIR" && \
     chown -R node:node "$PUPPETEER_CACHE_DIR" "$(npm root -g)" && rm -rf /tmp/*
-
-# Puppeteer launch test (non-fatal)
-RUN node -e "try{require('puppeteer').launch({headless: 'new'}).then(b=>b.close())}catch(e){console.warn('\u26a0\ufe0f Puppeteer launch skipped during build')}"
 
 # Create runtime directories
 RUN mkdir -p "$HOME/.cache/n8n/public" /data/shared/{videos,audio,transcripts} && \
