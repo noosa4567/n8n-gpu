@@ -65,12 +65,12 @@ RUN mkdir -p /home/node/.cache/puppeteer
 # Updated to specify Puppeteer v24.14.0 (which pulls Chrome 138.0.7204.157) so it finds the Chrome it’s looking for
 RUN npm install -g --unsafe-perm \
       n8n@1.104.1 \
-      puppeteer@24.14.0 \  # Use Puppeteer v24.14.0 (Chrome 157) instead of 24.15.0
+      puppeteer@24.14.0 \
       n8n-nodes-puppeteer@1.4.1 \
       ajv@8.17.1 \
       --legacy-peer-deps \
- && npm cache clean --force \
- && chown -R node:node /home/node/.cache/puppeteer "$(npm root -g)"
+  && npm cache clean --force \
+  && chown -R node:node /home/node/.cache/puppeteer "$(npm root -g)"
 
 # 8) Install Whisper & tokenizer, pre-download base model (with retry)
 RUN pip3 install --no-cache-dir tiktoken openai-whisper==20250625 \
