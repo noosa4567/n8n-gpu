@@ -1,5 +1,5 @@
 # ULTIMATE Dockerfile: n8n + Whisper + Puppeteer + GPU + FFmpeg built from source (CUDA 11.8 + Ubuntu 22.04)
-FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Australia/Brisbane \
@@ -56,10 +56,16 @@ RUN apt-get update \
       git wget curl ca-certificates \
       libass-dev libfreetype6-dev libfontconfig-dev libxml2-dev \
       libvorbis-dev libopus-dev libx264-dev libx265-dev libmp3lame-dev \
-      nvidia-cuda-toolkit \
-      nvidia-headless-535-server nvidia-utils-535-server \
-      libnvidia-encode-535-server libnvidia-decode-535-server \
  && rm -rf /var/lib/apt/lists/*
+
+# 7.5) Install NVIDIA Video Codec SDK headers for ffnvcodec (fixes cuvid/ffnvcodec dependency)
+RUN git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git \
+ && cd nv-codec-headers \
+ && git checkout n11.1.5.3 \
+ && make \
+ && make install \
+ && cd .. \
+ && rm -rf nv-codec-headers
 
 # 8) Build and install FFmpeg 5.1.4 with CUDA/NVENC
 RUN git clone https://git.ffmpeg.org/ffmpeg.git -b n5.1.4 \
@@ -67,7 +73,7 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git -b n5.1.4 \
  && ./configure \
       --prefix=/usr/local \
       --enable-gpl --enable-nonfree \
-      --enable-cuda-nvcc --enable-libnpp --enable-cuvid --enable-nvdec --enable-nvenc \
+      --enable-cuda-nvcc --enable-ffnvcodec --enable-libnpp --enable-cuvid --enable-nvdec --enable-nvenc \
       --enable-libass --enable-libfreetype --enable-libfontconfig \
       --enable-libxml2 --enable-libvorbis --enable-libopus --enable-libx264 --enable-libx265 --enable-libmp3lame \
       --extra-cflags=-I/usr/local/cuda/include \
@@ -83,7 +89,6 @@ RUN apt-get purge -y \
       build-essential yasm cmake libtool libnuma-dev pkg-config git wget curl \
       libass-dev libfreetype6-dev libfontconfig-dev libxml2-dev \
       libvorbis-dev libopus-dev libx264-dev libx265-dev libmp3lame-dev \
-      nvidia-cuda-toolkit \
  && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*
 
