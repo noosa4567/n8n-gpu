@@ -29,7 +29,7 @@ RUN rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia*
 # 3) Install system libs for FFmpeg, Whisper audio I/O, Puppeteer
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      tini curl ca-certificates gnupg \
+      tini git curl ca-certificates gnupg \
       python3 python3-pip xz-utils \
       libsndio7.0 libasound2 \
       libva2 libva-x11-2 libva-drm2 libva-wayland2 \
