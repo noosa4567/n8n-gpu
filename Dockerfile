@@ -9,10 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential yasm cmake libtool libc6-dev libnuma-dev pkg-config git wget \
       libass-dev libfreetype6-dev libfontconfig-dev libxml2-dev \
       libvorbis-dev libopus-dev libx264-dev libx265-dev libmp3lame-dev && \
-    apt-get clean && rm -rf /var/lib/apt/lists/* && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* && \
     git clone https://github.com/FFmpeg/nv-codec-headers.git && \
-    cd nv-codec-headers && \
-    git checkout n11.1.5.3 && \
+    cd nv-codec-headers && git checkout n11.1.5.3 && \
     make && make install && cd .. && rm -rf nv-codec-headers && \
     git clone https://git.ffmpeg.org/ffmpeg.git -b n5.1.4 && \
     cd ffmpeg && \
@@ -25,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       --extra-cflags=-I/usr/local/cuda/include \
       --extra-ldflags=-L/usr/local/cuda/lib64 && \
     make -j"$(nproc)" && make install && \
-    cd .. && rm -rf ffmpeg
+    cd .. && rm -rf ffmpeg /tmp/*
 
 # ----------------------------
 # Stage 2 – Runtime Image
@@ -55,15 +54,15 @@ RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" && chown -R node:node "$HOME"
 
-# Add Mesa PPA
+# Add Mesa PPA for latest libgbm/libegl
 RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common && \
     add-apt-repository ppa:oibaf/graphics-drivers -y && \
-    apt-get update && apt-get clean && rm -rf /var/lib/apt/lists/*
+    apt-get update && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
 
-# Install all required runtime dependencies
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
       tini git curl ca-certificates gnupg wget xz-utils \
-      python3 python3-pip binutils \
+      python3 python3-pip binutils libglib2.0-bin \
       libsndio7.0 libasound2 libsdl2-2.0-0 libxv1 \
       libva2 libva-x11-2 libva-drm2 libva-wayland2 \
       libvdpau1 libxcb1 libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-render0 \
@@ -75,20 +74,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libpangocairo-1.0-0 libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
       fonts-liberation lsb-release xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
       libnvidia-egl-gbm1 && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+    apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
 
 # Remove NVIDIA’s conflicting libgbm
 RUN rm -f /usr/local/nvidia/lib/libgbm.so.1 /usr/local/nvidia/lib64/libgbm.so.1
 
 # Install legacy libsndio
 RUN wget -qO /tmp/libsndio6.1.deb http://security.ubuntu.com/ubuntu/pool/universe/s/sndio/libsndio6.1_1.1.0-3_amd64.deb && \
-    dpkg -i /tmp/libsndio6.1.deb && rm /tmp/libsndio6.1.deb
+    dpkg -i /tmp/libsndio6.1.deb && rm /tmp/libsndio6.1.deb && rm -rf /tmp/*
 
 # Install Node.js 20.x
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x -o nodesource_setup.sh && \
     bash nodesource_setup.sh && \
     apt-get install -y --no-install-recommends nodejs && \
-    rm nodesource_setup.sh && apt-get clean && rm -rf /var/lib/apt/lists/*
+    rm nodesource_setup.sh && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
+
+# Upgrade pip, setuptools, wheel first
+RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel && rm -rf /root/.cache/pip/*
+
+# Install PyTorch and numpy
+RUN pip3 install --no-cache-dir \
+      --index-url https://download.pytorch.org/whl/cu118 \
+      torch==2.1.0+cu118 numpy==1.26.3 && \
+    rm -rf /root/.cache/pip/* /tmp/*
+
+# Install Whisper and preload model
+RUN pip3 install --no-cache-dir tiktoken openai-whisper && \
+    mkdir -p "$WHISPER_MODEL_PATH" && \
+    python3 -c "import whisper; whisper.load_model('base', download_root='$WHISPER_MODEL_PATH')" && \
+    chown -R node:node "$WHISPER_MODEL_PATH" && \
+    rm -rf /root/.cache/pip/* /tmp/*
 
 # Install n8n, Puppeteer, Puppeteer nodes
 RUN npm install -g --unsafe-perm \
@@ -99,25 +114,15 @@ RUN npm install -g --unsafe-perm \
       --legacy-peer-deps && \
     npm cache clean --force && \
     mkdir -p "$PUPPETEER_CACHE_DIR" && \
-    chown -R node:node "$PUPPETEER_CACHE_DIR" "$(npm root -g)"
+    chown -R node:node "$PUPPETEER_CACHE_DIR" "$(npm root -g)" && rm -rf /tmp/*
 
-# Install PyTorch and numpy (split to isolate large layer)
-RUN pip3 install --no-cache-dir \
-      --index-url https://download.pytorch.org/whl/cu118 \
-      torch==2.1.0+cu118 numpy==1.26.3 && \
-    rm -rf /root/.cache/pip/*
-
-# Install remaining Whisper deps and model
-RUN pip3 install --no-cache-dir tiktoken openai-whisper && \
-    mkdir -p "$WHISPER_MODEL_PATH" && \
-    python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" && \
-    chown -R node:node "$WHISPER_MODEL_PATH" && \
-    rm -rf /root/.cache/pip/*
+# Puppeteer launch test (non-fatal)
+RUN node -e "try{require('puppeteer').launch({headless: 'new'}).then(b=>b.close())}catch(e){console.warn('⚠️ Puppeteer launch skipped during build')}"
 
 # Create runtime directories
 RUN mkdir -p "$HOME/.cache/n8n/public" /data/shared/{videos,audio,transcripts} && \
     chown -R node:node "$HOME" /data/shared && \
-    chmod -R 770 /data/shared "$HOME/.cache"
+    chmod -R 770 /data/shared "$HOME/.cache" && rm -rf /tmp/*
 
 # Final FFmpeg link validation
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" && \
