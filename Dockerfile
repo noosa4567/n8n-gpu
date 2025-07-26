@@ -24,7 +24,7 @@ RUN groupadd -r node \
  && mkdir -p "$HOME/.n8n" \
  && chown -R node:node "$HOME"
 
-# 2) Remove NVIDIA repos (avoid mirror mismatches)
+# 2) Remove NVIDIA repos (avoid mirror desync)
 RUN rm -f /etc/apt/sources.list.d/cuda* /etc/apt/sources.list.d/nvidia*
 
 # 3) Install system libs Puppeteer & FFmpeg need
@@ -76,11 +76,7 @@ RUN pip3 install --no-cache-dir \
  && pip3 install --no-cache-dir tiktoken openai-whisper \
  && pip3 cache purge \
  && mkdir -p "${WHISPER_MODEL_PATH}" \
- && (python3 - <<EOF
-import whisper, os
-whisper.load_model("base", download_root=os.environ["WHISPER_MODEL_PATH"])
-EOF
-    ) \
+ && python3 -c "import whisper, os; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" \
  && chown -R node:node "${WHISPER_MODEL_PATH}"
 
 # 9) Pre-create & chown runtime dirs
