@@ -1,5 +1,4 @@
 # ULTIMATE Dockerfile: n8n + Whisper + Puppeteer + GPU + FFmpeg built from source (CUDA 11.8 + Ubuntu 22.04)
-
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -57,10 +56,12 @@ RUN apt-get update \
       git wget curl ca-certificates \
       libass-dev libfreetype6-dev libfontconfig-dev libxml2-dev \
       libvorbis-dev libopus-dev libx264-dev libx265-dev libmp3lame-dev \
-      nvidia-cuda-toolkit libnvidia-encode1 libnvidia-encode-dev \
+      nvidia-cuda-toolkit \
+      nvidia-headless-535-server nvidia-utils-535-server \
+      libnvidia-encode-535-server libnvidia-decode-535-server \
  && rm -rf /var/lib/apt/lists/*
 
-# 8) Build and install FFmpeg 5.1 with CUDA 11.8
+# 8) Build and install FFmpeg 5.1.4 with CUDA/NVENC
 RUN git clone https://git.ffmpeg.org/ffmpeg.git -b n5.1.4 \
  && cd ffmpeg \
  && ./configure \
@@ -79,10 +80,10 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git -b n5.1.4 \
 
 # 9) Clean up build dependencies
 RUN apt-get purge -y \
-      build-essential yasm cmake libtool libnuma-dev pkg-config git wget \
+      build-essential yasm cmake libtool libnuma-dev pkg-config git wget curl \
       libass-dev libfreetype6-dev libfontconfig-dev libxml2-dev \
       libvorbis-dev libopus-dev libx264-dev libx265-dev libmp3lame-dev \
-      nvidia-cuda-toolkit libnvidia-encode-dev \
+      nvidia-cuda-toolkit \
  && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*
 
@@ -132,5 +133,5 @@ USER node
 WORKDIR $HOME
 EXPOSE 5678
 
-ENTRYPOINT ["tini","--","n8n","start"]
+ENTRYPOINT ["tini", "--", "n8n", "start"]
 CMD []
