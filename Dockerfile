@@ -86,7 +86,7 @@ RUN git clone https://git.ffmpeg.org/ffmpeg.git -b n5.1.4 \
 
 # 9) Clean up build dependencies
 RUN apt-get purge -y \
-      build-essential yasm cmake libtool libnuma-dev pkg-config git wget curl \
+      build-essential yasm cmake libtool libnuma-dev pkg-config git wget ca-certificates \
       libass-dev libfreetype6-dev libfontconfig-dev libxml2-dev \
       libvorbis-dev libopus-dev libx264-dev libx265-dev libmp3lame-dev \
  && apt-get autoremove -y \
