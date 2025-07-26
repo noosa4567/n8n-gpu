@@ -1,5 +1,5 @@
 # ----------------------------
-# Stage 1 – FFmpeg Compilation
+# Stage 1 – FFmpeg Compilation (minimized for Whisper audio needs)
 # ----------------------------
 FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS builder
 
@@ -8,7 +8,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential yasm cmake libtool libc6-dev libnuma-dev pkg-config git wget \
       libass-dev libfreetype6-dev libfontconfig-dev libxml2-dev \
-      libvorbis-dev libopus-dev libx264-dev libx265-dev libmp3lame-dev && \
+      libvorbis-dev libopus-dev libmp3lame-dev && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* && \
     git clone https://github.com/FFmpeg/nv-codec-headers.git && \
     cd nv-codec-headers && git checkout n11.1.5.3 && \
@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       --enable-gpl --enable-nonfree \
       --enable-cuda-nvcc --enable-ffnvcodec --enable-libnpp --enable-cuvid --enable-nvdec --enable-nvenc \
       --enable-libass --enable-libfreetype --enable-libfontconfig \
-      --enable-libxml2 --enable-libvorbis --enable-libopus --enable-libx264 --enable-libx265 --enable-libmp3lame \
+      --enable-libxml2 --enable-libvorbis --enable-libopus --enable-libmp3lame \
       --extra-cflags=-I/usr/local/cuda/include \
       --extra-ldflags=-L/usr/local/cuda/lib64 && \
     make -j"$(nproc)" && make install && \
@@ -37,6 +37,7 @@ ENV TZ=Australia/Brisbane \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
     TORCH_HOME=/opt/torch_cache \
+    PUPPETEER_SKIP_DOWNLOAD=true \
     LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 
 # Copy compiled FFmpeg
@@ -54,30 +55,25 @@ RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" && chown -R node:node "$HOME"
 
-# Add Mesa PPA for latest libgbm/libegl
-RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common && \
-    add-apt-repository ppa:oibaf/graphics-drivers -y && \
-    apt-get update && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
-
-# Install runtime dependencies
+# Install all runtime dependencies in one pass (consolidated)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      tini git curl ca-certificates gnupg wget xz-utils \
+      software-properties-common tini git curl ca-certificates gnupg wget xz-utils \
       python3 python3-pip binutils libglib2.0-bin \
       libsndio7.0 libasound2 libsdl2-2.0-0 libxv1 \
       libva2 libva-x11-2 libva-drm2 libva-wayland2 \
       libvdpau1 libxcb1 libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-render0 \
-      libx11-6 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 \
-      libxrender1 libxss1 libxtst6 libxi6 libxcursor1 \
+      libx11-6 libx11-xcb1 libxi6 libxcursor1 \
       libatk-bridge2.0-0 libatk1.0-0 libcairo2 libcups2 libdbus-1-3 libexpat1 \
       libfontconfig1 libgbm1 libegl1-mesa libgl1-mesa-dri libdrm2 \
       libglib2.0-0 libgtk-3-0 libnspr4 libnss3 \
       libpangocairo-1.0-0 libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
       fonts-liberation lsb-release xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
       libnvidia-egl-gbm1 && \
-    apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
+    add-apt-repository ppa:oibaf/graphics-drivers -y && \
+    apt-get update && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
 
 # Remove NVIDIA’s conflicting libgbm
-RUN rm -f /usr/local/nvidia/lib/libgbm.so.1 /usr/local/nvidia/lib64/libgbm.so.1
+RUN rm -f /usr/local/nvidia/lib/libgbm.so.1 /usr/local/nvidia/lib64/libgbm.so.1 && rm -rf /tmp/*
 
 # Install legacy libsndio
 RUN wget -qO /tmp/libsndio6.1.deb http://security.ubuntu.com/ubuntu/pool/universe/s/sndio/libsndio6.1_1.1.0-3_amd64.deb && \
@@ -89,8 +85,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x -o nodesource_setup.sh && \
     apt-get install -y --no-install-recommends nodejs && \
     rm nodesource_setup.sh && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
 
-# Upgrade pip, setuptools, wheel first
-RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel && rm -rf /root/.cache/pip/*
+# Upgrade pip, setuptools, wheel
+RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel && rm -rf /root/.cache/pip/* /tmp/*
 
 # Install PyTorch and numpy
 RUN pip3 install --no-cache-dir \
@@ -105,10 +101,9 @@ RUN pip3 install --no-cache-dir tiktoken openai-whisper && \
     chown -R node:node "$WHISPER_MODEL_PATH" && \
     rm -rf /root/.cache/pip/* /tmp/*
 
-# Install n8n, Puppeteer, Puppeteer nodes
+# Install n8n and Puppeteer nodes (no global puppeteer)
 RUN npm install -g --unsafe-perm \
       n8n@1.104.1 \
-      puppeteer@24.14.0 \
       n8n-nodes-puppeteer@1.4.1 \
       ajv@8.17.1 \
       --legacy-peer-deps && \
@@ -117,7 +112,7 @@ RUN npm install -g --unsafe-perm \
     chown -R node:node "$PUPPETEER_CACHE_DIR" "$(npm root -g)" && rm -rf /tmp/*
 
 # Puppeteer launch test (non-fatal)
-RUN node -e "try{require('puppeteer').launch({headless: 'new'}).then(b=>b.close())}catch(e){console.warn('⚠️ Puppeteer launch skipped during build')}"
+RUN node -e "try{require('puppeteer').launch({headless: 'new'}).then(b=>b.close())}catch(e){console.warn('\u26a0\ufe0f Puppeteer launch skipped during build')}"
 
 # Create runtime directories
 RUN mkdir -p "$HOME/.cache/n8n/public" /data/shared/{videos,audio,transcripts} && \
