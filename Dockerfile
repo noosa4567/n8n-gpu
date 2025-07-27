@@ -7,7 +7,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential yasm cmake libtool libc6-dev libnuma-dev pkg-config git wget \
-      libass-dev libvorbis-dev libopus-dev libmp3lame-dev libpostproc-dev && \
+      libvorbis-dev libopus-dev libmp3lame-dev libpostproc-dev && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* && \
     git clone --depth 1 --branch n11.1.5.3 https://github.com/FFmpeg/nv-codec-headers.git nv-codec-headers && \
     cd nv-codec-headers && make && make install && cd .. && rm -rf nv-codec-headers && \
@@ -20,10 +20,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       --disable-static \
       --enable-ffmpeg \
       --enable-postproc \
-      --enable-protocol=file \
+      --enable-protocol=file,pipe \
       --enable-demuxer=wav,mp3,flac,aac,ogg,opus,mov,matroska \
       --enable-decoder=pcm_s16le,pcm_s16be,pcm_s24le,pcm_s32le,flac,mp3,aac,opus,vorbis \
-      --enable-libass --enable-libvorbis --enable-libopus --enable-libmp3lame \
+      --enable-libvorbis --enable-libopus --enable-libmp3lame \
       --enable-gpl --enable-nonfree && \
     make -j"$(nproc)" && make install && \
     cd .. && rm -rf ffmpeg /tmp/*
@@ -43,12 +43,16 @@ ENV TZ=Australia/Brisbane \
     NODE_PATH=/usr/local/lib/node_modules \
     CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
 
+# Copy compiled FFmpeg and its libs
 COPY --from=builder /usr/local/bin/ff* /usr/local/bin/
 COPY --from=builder /usr/local/lib/libav* /usr/local/lib/
 COPY --from=builder /usr/local/lib/libsw* /usr/local/lib/
 COPY --from=builder /usr/local/lib/libpostproc* /usr/local/lib/
 COPY --from=builder /usr/local/include/libav* /usr/local/include/
 COPY --from=builder /usr/local/include/libsw* /usr/local/include/
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libvorbis* /usr/local/lib/
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libopus* /usr/local/lib/
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libmp3lame* /usr/local/lib/
 RUN ldconfig
 
 RUN groupadd -r node && \
@@ -71,7 +75,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libglib2.0-0 libgtk-3-0 libnspr4 libnss3 \
       libpangocairo-1.0-0 libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
       fonts-liberation lsb-release xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
-      libnvidia-egl-gbm1 libass9 libmp3lame0 libopus0 libvorbis0a libvorbisenc2 && \
+      libnvidia-egl-gbm1 && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /usr/share/man/* /usr/share/doc/* /var/log/* /var/tmp/*
 
 RUN rm -f /usr/local/nvidia/lib/libgbm.so.1 /usr/local/nvidia/lib64/libgbm.so.1 && rm -rf /tmp/*
