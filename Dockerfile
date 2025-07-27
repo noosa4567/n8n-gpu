@@ -1,5 +1,5 @@
 # ----------------------------
-# Stage 1 – FFmpeg Compilation (minimal for Whisper)
+# Stage 1 – FFmpeg Compilation (minimized for Whisper audio needs)
 # ----------------------------
 FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS builder
 
@@ -8,7 +8,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential yasm cmake libtool libc6-dev libnuma-dev pkg-config git wget \
       libass-dev libvorbis-dev libopus-dev libmp3lame-dev && \
-    apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /usr/share/man/* /usr/share/doc/* /var/log/* /var/tmp/* && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* && \
     git clone --depth 1 --branch n11.1.5.3 https://github.com/FFmpeg/nv-codec-headers.git nv-codec-headers && \
     cd nv-codec-headers && make && make install && cd .. && rm -rf nv-codec-headers && \
     git clone --depth 1 --branch n5.1.4 https://git.ffmpeg.org/ffmpeg.git ffmpeg && \
@@ -16,8 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ./configure \
       --prefix=/usr/local \
       --enable-gpl --enable-nonfree \
-      --enable-cuda-nvcc --enable-ffnvcodec --enable-cuvid --enable-nvdec --enable-nvenc \
-      --enable-libass --enable-libvorbis --enable-libopus --enable-libmp3lame && \
+      --enable-libass \
+      --enable-libvorbis --enable-libopus --enable-libmp3lame && \
     make -j"$(nproc)" && make install && \
     cd .. && rm -rf ffmpeg /tmp/*
 
@@ -32,15 +32,17 @@ ENV TZ=Australia/Brisbane \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
     TORCH_HOME=/opt/torch_cache \
-    PUPPETEER_SKIP_DOWNLOAD=false \
+    PUPPETEER_SKIP_DOWNLOAD=true \
     LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 
-# Copy FFmpeg
+# Copy compiled FFmpeg
 COPY --from=builder /usr/local/bin/ff* /usr/local/bin/
 COPY --from=builder /usr/local/lib/libav* /usr/local/lib/
 COPY --from=builder /usr/local/lib/libsw* /usr/local/lib/
+COPY --from=builder /usr/local/lib/libpostproc* /usr/local/lib/
 COPY --from=builder /usr/local/include/libav* /usr/local/include/
 COPY --from=builder /usr/local/include/libsw* /usr/local/include/
+COPY --from=builder /usr/local/include/libpostproc* /usr/local/include/
 RUN ldconfig
 
 # Create non-root user
@@ -48,11 +50,13 @@ RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" && chown -R node:node "$HOME"
 
-# Install all runtime deps (includes Puppeteer + libsndio + EGL fix)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      software-properties-common && \
+# Add Mesa PPA for latest libgbm/libegl
+RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common && \
     add-apt-repository ppa:oibaf/graphics-drivers -y && \
-    apt-get update && apt-get install -y --no-install-recommends \
+    apt-get update && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
       tini git curl ca-certificates gnupg wget xz-utils \
       python3 python3-pip binutils libglib2.0-bin \
       libsndio7.0 libasound2 libsdl2-2.0-0 libxv1 \
@@ -68,32 +72,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libnvidia-egl-gbm1 && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /usr/share/man/* /usr/share/doc/* /var/log/* /var/tmp/*
 
-RUN rm -f /usr/local/nvidia/lib/libgbm.so.1 /usr/local/nvidia/lib64/libgbm.so.1
+# Remove NVIDIA’s conflicting libgbm
+RUN rm -f /usr/local/nvidia/lib/libgbm.so.1 /usr/local/nvidia/lib64/libgbm.so.1 && rm -rf /tmp/*
 
-# Legacy libsndio for Puppeteer
+# Install legacy libsndio
 RUN wget -qO /tmp/libsndio6.1.deb http://security.ubuntu.com/ubuntu/pool/universe/s/sndio/libsndio6.1_1.1.0-3_amd64.deb && \
     dpkg -i /tmp/libsndio6.1.deb && rm /tmp/libsndio6.1.deb && rm -rf /tmp/*
 
-# Node.js
+# Install Node.js 20.x
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x -o nodesource_setup.sh && \
     bash nodesource_setup.sh && \
     apt-get install -y --no-install-recommends nodejs && \
     rm nodesource_setup.sh && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
 
-# Pip + Torch
+# Upgrade pip, setuptools, wheel
 RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel && rm -rf /root/.cache/pip/* /tmp/*
+
+# Install PyTorch and numpy
 RUN pip3 install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cu118 \
       torch==2.1.0+cu118 numpy==1.26.3 && \
     rm -rf /root/.cache/pip/* /tmp/*
 
-# Whisper + preload base model
+# Install Whisper (without preloading model)
 RUN pip3 install --no-cache-dir tiktoken openai-whisper && \
     mkdir -p "$WHISPER_MODEL_PATH" && \
-    python3 -c "import whisper; whisper.load_model('base', download_root='$WHISPER_MODEL_PATH')" && \
-    chown -R node:node "$WHISPER_MODEL_PATH" && rm -rf /root/.cache/pip/* /tmp/*
+    chown -R node:node "$WHISPER_MODEL_PATH" && \
+    rm -rf /root/.cache/pip/* /tmp/*
 
-# n8n + Puppeteer
+# Install n8n, Puppeteer, Puppeteer nodes
 RUN npm install -g --unsafe-perm \
       n8n@1.104.1 \
       puppeteer@24.14.0 \
@@ -102,13 +109,14 @@ RUN npm install -g --unsafe-perm \
       --legacy-peer-deps && \
     npm cache clean --force && \
     mkdir -p "$PUPPETEER_CACHE_DIR" && \
-    chown -R node:node "$PUPPETEER_CACHE_DIR" "$(npm root -g)" && rm -rf /tmp/* /root/.npm/*
+    chown -R node:node "$PUPPETEER_CACHE_DIR" "$(npm root -g)" && rm -rf /tmp/*
 
-# Create runtime dirs
+# Create runtime directories
 RUN mkdir -p "$HOME/.cache/n8n/public" /data/shared/{videos,audio,transcripts} && \
-    chown -R node:node "$HOME" /data/shared && chmod -R 770 /data/shared "$HOME/.cache"
+    chown -R node:node "$HOME" /data/shared && \
+    chmod -R 770 /data/shared "$HOME/.cache" && rm -rf /tmp/*
 
-# FFmpeg link check
+# Final FFmpeg link validation
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" && \
     (echo "❌ unresolved FFmpeg libs" >&2 && exit 1) || echo "✅ FFmpeg libs OK"
 
