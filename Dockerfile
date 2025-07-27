@@ -40,7 +40,8 @@ ENV TZ=Australia/Brisbane \
     TORCH_HOME=/opt/torch_cache \
     LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64 \
     DOCKER_BUILDKIT=1 \
-    COMPRESSION_LEVEL=9
+    COMPRESSION_LEVEL=9 \
+    PYTHONDONTWRITEBYTECODE=1
 
 # Copy compiled FFmpeg
 COPY --from=builder /usr/local/bin/ff* /usr/local/bin/
