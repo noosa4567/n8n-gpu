@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ./configure \
       --prefix=/usr/local \
       --disable-everything \
+      --enable-shared \
+      --disable-static \
       --enable-ffmpeg \
       --enable-protocol=file \
       --enable-demuxer=wav,mp3,flac,aac,ogg,opus,mov,matroska \
@@ -36,8 +38,8 @@ ENV TZ=Australia/Brisbane \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
     TORCH_HOME=/opt/torch_cache \
-    LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
-    DOCKER_BUILDKIT=1
+    LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64 \
+    DOCKER_BUILDKIT=1 \
     COMPRESSION_LEVEL=9
 
 # Copy compiled FFmpeg
@@ -93,7 +95,7 @@ RUN pip3 install --no-cache-dir \
       torch==2.1.0+cu118 numpy==1.26.3 && \
     rm -rf /root/.cache/pip/* /tmp/*
 
-# Whisper
+# Whisper with model preload
 RUN pip3 install --no-cache-dir tiktoken openai-whisper && \
     mkdir -p "$WHISPER_MODEL_PATH" && \
     chown -R node:node "$WHISPER_MODEL_PATH" && \
