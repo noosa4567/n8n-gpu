@@ -1,5 +1,5 @@
 # ----------------------------
-# Stage 1 – FFmpeg Compilation (minimized for Whisper audio needs)
+# Stage 1 – Minimized FFmpeg for Whisper
 # ----------------------------
 FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS builder
 
@@ -15,9 +15,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cd ffmpeg && \
     ./configure \
       --prefix=/usr/local \
-      --enable-gpl --enable-nonfree \
-      --enable-libass \
-      --enable-libvorbis --enable-libopus --enable-libmp3lame && \
+      --disable-everything \
+      --enable-ffmpeg \
+      --enable-protocol=file \
+      --enable-demuxer=wav,mp3,flac,aac,ogg,opus,mov,matroska \
+      --enable-decoder=pcm_s16le,pcm_s16be,pcm_s24le,pcm_s32le,flac,mp3,aac,opus,vorbis \
+      --enable-libass --enable-libvorbis --enable-libopus --enable-libmp3lame \
+      --enable-gpl --enable-nonfree && \
     make -j"$(nproc)" && make install && \
     cd .. && rm -rf ffmpeg /tmp/*
 
@@ -39,10 +43,8 @@ ENV TZ=Australia/Brisbane \
 COPY --from=builder /usr/local/bin/ff* /usr/local/bin/
 COPY --from=builder /usr/local/lib/libav* /usr/local/lib/
 COPY --from=builder /usr/local/lib/libsw* /usr/local/lib/
-COPY --from=builder /usr/local/lib/libpostproc* /usr/local/lib/
 COPY --from=builder /usr/local/include/libav* /usr/local/include/
 COPY --from=builder /usr/local/include/libsw* /usr/local/include/
-COPY --from=builder /usr/local/include/libpostproc* /usr/local/include/
 RUN ldconfig
 
 # Create non-root user
@@ -50,13 +52,11 @@ RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" && chown -R node:node "$HOME"
 
-# Add Mesa PPA for latest libgbm/libegl
-RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common && \
-    add-apt-repository ppa:oibaf/graphics-drivers -y && \
-    apt-get update && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
-
-# Install runtime dependencies
+# Mesa + Puppeteer dependencies (libgbm fix)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+      software-properties-common && \
+    add-apt-repository ppa:oibaf/graphics-drivers -y && \
+    apt-get update && apt-get install -y --no-install-recommends \
       tini git curl ca-certificates gnupg wget xz-utils \
       python3 python3-pip binutils libglib2.0-bin \
       libsndio7.0 libasound2 libsdl2-2.0-0 libxv1 \
@@ -75,32 +75,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Remove NVIDIA’s conflicting libgbm
 RUN rm -f /usr/local/nvidia/lib/libgbm.so.1 /usr/local/nvidia/lib64/libgbm.so.1 && rm -rf /tmp/*
 
-# Install legacy libsndio
+# Legacy libsndio
 RUN wget -qO /tmp/libsndio6.1.deb http://security.ubuntu.com/ubuntu/pool/universe/s/sndio/libsndio6.1_1.1.0-3_amd64.deb && \
     dpkg -i /tmp/libsndio6.1.deb && rm /tmp/libsndio6.1.deb && rm -rf /tmp/*
 
-# Install Node.js 20.x
+# Node.js
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x -o nodesource_setup.sh && \
     bash nodesource_setup.sh && \
     apt-get install -y --no-install-recommends nodejs && \
     rm nodesource_setup.sh && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
 
-# Upgrade pip, setuptools, wheel
+# Pip + Torch
 RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel && rm -rf /root/.cache/pip/* /tmp/*
-
-# Install PyTorch and numpy
 RUN pip3 install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cu118 \
       torch==2.1.0+cu118 numpy==1.26.3 && \
     rm -rf /root/.cache/pip/* /tmp/*
 
-# Install Whisper (without preloading model)
+# Whisper
 RUN pip3 install --no-cache-dir tiktoken openai-whisper && \
     mkdir -p "$WHISPER_MODEL_PATH" && \
-    chown -R node:node "$WHISPER_MODEL_PATH" && \
-    rm -rf /root/.cache/pip/* /tmp/*
+    chown -R node:node "$WHISPER_MODEL_PATH" && rm -rf /root/.cache/pip/* /tmp/*
 
-# Install n8n, Puppeteer, Puppeteer nodes
+# Puppeteer + n8n
 RUN npm install -g --unsafe-perm \
       n8n@1.104.1 \
       puppeteer@24.14.0 \
@@ -111,12 +108,11 @@ RUN npm install -g --unsafe-perm \
     mkdir -p "$PUPPETEER_CACHE_DIR" && \
     chown -R node:node "$PUPPETEER_CACHE_DIR" "$(npm root -g)" && rm -rf /tmp/*
 
-# Create runtime directories
+# Runtime dirs
 RUN mkdir -p "$HOME/.cache/n8n/public" /data/shared/{videos,audio,transcripts} && \
-    chown -R node:node "$HOME" /data/shared && \
-    chmod -R 770 /data/shared "$HOME/.cache" && rm -rf /tmp/*
+    chown -R node:node "$HOME" /data/shared && chmod -R 770 /data/shared "$HOME/.cache"
 
-# Final FFmpeg link validation
+# FFmpeg link check
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" && \
     (echo "❌ unresolved FFmpeg libs" >&2 && exit 1) || echo "✅ FFmpeg libs OK"
 
