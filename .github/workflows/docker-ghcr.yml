@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest-xl   # ⬅️ Extra disk space and RAM
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
