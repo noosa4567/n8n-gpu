@@ -27,12 +27,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - name: Build and push Docker image
+      - name: Build and push Docker image (streamed to GHCR)
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          load: false            # ✅ Prevent local image save (critical for avoiding disk space errors)
-          tags: ghcr.io/${{ github.repository_owner }}/n8n-whisper:latest
+          outputs: type=registry
+          tags: ghcr.io/${{ github.repository_owner }}/n8n-gpu:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
