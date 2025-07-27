@@ -43,7 +43,6 @@ ENV TZ=Australia/Brisbane \
     NODE_PATH=/usr/local/lib/node_modules \
     CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
 
-# Copy compiled FFmpeg
 COPY --from=builder /usr/local/bin/ff* /usr/local/bin/
 COPY --from=builder /usr/local/lib/libav* /usr/local/lib/
 COPY --from=builder /usr/local/lib/libsw* /usr/local/lib/
@@ -52,12 +51,10 @@ COPY --from=builder /usr/local/include/libav* /usr/local/include/
 COPY --from=builder /usr/local/include/libsw* /usr/local/include/
 RUN ldconfig
 
-# Create non-root user
 RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" && chown -R node:node "$HOME"
 
-# Mesa + Puppeteer dependencies (added FFmpeg external runtime libs)
 RUN apt-get update && apt-get install -y --no-install-recommends \
       software-properties-common && \
     add-apt-repository ppa:oibaf/graphics-drivers -y && \
@@ -77,34 +74,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libnvidia-egl-gbm1 libass9 libmp3lame0 libopus0 libvorbis0a libvorbisenc2 && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /usr/share/man/* /usr/share/doc/* /var/log/* /var/tmp/*
 
-# Remove NVIDIA’s conflicting libgbm
 RUN rm -f /usr/local/nvidia/lib/libgbm.so.1 /usr/local/nvidia/lib64/libgbm.so.1 && rm -rf /tmp/*
 
-# Legacy libsndio
 RUN wget -qO /tmp/libsndio6.1.deb http://security.ubuntu.com/ubuntu/pool/universe/s/sndio/libsndio6.1_1.1.0-3_amd64.deb && \
     dpkg -i /tmp/libsndio6.1.deb && rm /tmp/libsndio6.1.deb && rm -rf /tmp/*
 
-# Node.js
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x -o nodesource_setup.sh && \
     bash nodesource_setup.sh && \
     apt-get install -y --no-install-recommends nodejs && \
     rm nodesource_setup.sh && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
 
-# Pip + Torch
 RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel && rm -rf /root/.cache/pip/* /tmp/*
 RUN pip3 install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cu118 \
       torch==2.1.0+cu118 numpy==1.26.3 && \
     rm -rf /root/.cache/pip/* /tmp/*
 
-# Whisper with model preload
 RUN pip3 install --no-cache-dir tiktoken openai-whisper && \
     mkdir -p "$WHISPER_MODEL_PATH" && \
     chown -R node:node "$WHISPER_MODEL_PATH" && \
     python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" && \
     rm -rf /root/.cache/pip/* /tmp/*
 
-# Puppeteer + n8n (with SUID sandbox setup for fallback)
 RUN npm install -g --unsafe-perm \
       n8n@1.104.1 \
       puppeteer@24.14.0 \
@@ -114,18 +105,13 @@ RUN npm install -g --unsafe-perm \
     npm cache clean --force && \
     mkdir -p "$PUPPETEER_CACHE_DIR" && \
     chown -R node:node "$PUPPETEER_CACHE_DIR" "$(npm root -g)" && rm -rf /tmp/* && \
-    # Set up SUID sandbox
-    chrome_path=$(node -e "console.log(require('puppeteer').executablePath())") && \
-    sandbox_dir=$(dirname "$chrome_path") && \
-    cp "$sandbox_dir/chrome_sandbox" /usr/local/sbin/chrome-devel-sandbox && \
+    cp $PUPPETEER_CACHE_DIR/chrome/linux-*/chrome-linux64/chrome_sandbox /usr/local/sbin/chrome-devel-sandbox && \
     chown root:root /usr/local/sbin/chrome-devel-sandbox && \
     chmod 4755 /usr/local/sbin/chrome-devel-sandbox
 
-# Runtime dirs
 RUN mkdir -p "$HOME/.cache/n8n/public" /data/shared/{videos,audio,transcripts} && \
     chown -R node:node "$HOME" /data/shared && chmod -R 770 /data/shared "$HOME/.cache"
 
-# FFmpeg link check
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" && \
     (echo "❌ unresolved FFmpeg libs" >&2 && exit 1) || echo "✅ FFmpeg libs OK"
 
