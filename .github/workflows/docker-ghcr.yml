@@ -32,6 +32,7 @@ jobs:
         with:
           context: .
           push: true
+          load: false            # ✅ Prevent local image save (critical for avoiding disk space errors)
           tags: ghcr.io/${{ github.repository_owner }}/n8n-whisper:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
