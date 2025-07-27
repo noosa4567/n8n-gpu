@@ -1,4 +1,4 @@
-name: Build and Push n8n GPU Image
+name: Old - Build and Push Image in build space
 
 on:
   workflow_dispatch:  # Manual trigger for now, can add schedule later if needed
