@@ -5,18 +5,18 @@ FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Install FFmpeg build dependencies and optional codecs (libass, libvorbis, etc.)
+# Install all required FFmpeg build dependencies, including GPU, codecs, and container formats
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential yasm cmake libtool libc6-dev libnuma-dev pkg-config git wget \
     libass-dev libvorbis-dev libopus-dev libmp3lame-dev libx264-dev libx265-dev \
     libvpx-dev libfdk-aac-dev libxml2-dev libunistring-dev && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# Install NVENC/NVDEC codec headers required for GPU support
+# Install NVIDIA codec headers needed to enable NVENC/NVDEC GPU acceleration in FFmpeg
 RUN git clone --depth 1 --branch n11.1.5.3 https://github.com/FFmpeg/nv-codec-headers.git && \
     cd nv-codec-headers && make && make install && cd .. && rm -rf nv-codec-headers
 
-# Clone and build FFmpeg with GPU acceleration and other optional codec support
+# Clone and build FFmpeg from source with selective GPU and codec support
 RUN git clone --depth 1 --branch n5.1.4 https://git.ffmpeg.org/ffmpeg.git && \
     cd ffmpeg && \
     ./configure \
@@ -47,11 +47,12 @@ ENV TZ=Australia/Brisbane \
     NODE_PATH=/usr/local/lib/node_modules \
     CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
 
-# Copy FFmpeg binary and runtime shared libs (only required ones to avoid library conflicts)
+# Copy FFmpeg binaries and ONLY essential dynamic libs from builder
 COPY --from=builder /usr/local/bin/ff* /usr/local/bin/
 COPY --from=builder /usr/local/lib/libav* /usr/local/lib/
 COPY --from=builder /usr/local/lib/libsw* /usr/local/lib/
 COPY --from=builder /usr/local/lib/libpostproc* /usr/local/lib/
+# Targeted dependency copying to avoid clobbering Puppeteer PPA libs
 COPY --from=builder /usr/lib/x86_64-linux-gnu/libass* /usr/local/lib/
 COPY --from=builder /usr/lib/x86_64-linux-gnu/libvorbis* /usr/local/lib/
 COPY --from=builder /usr/lib/x86_64-linux-gnu/libopus* /usr/local/lib/
@@ -64,12 +65,12 @@ COPY --from=builder /usr/lib/x86_64-linux-gnu/libxml2* /usr/local/lib/
 COPY --from=builder /usr/lib/x86_64-linux-gnu/libunistring* /usr/local/lib/
 RUN ldconfig
 
-# Create node user and base directories
+# Create dedicated user for n8n with video group for Puppeteer access
 RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" && chown -R node:node "$HOME"
 
-# Puppeteer dependencies (X11, sound, GL, GBM, etc.)
+# Puppeteer deps + modern graphics support via oibaf PPA
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common && \
     add-apt-repository ppa:oibaf/graphics-drivers -y && \
@@ -88,20 +89,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnvidia-egl-gbm1 && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/*
 
-# Remove Nvidia's libgbm shim (causes Puppeteer/Chromium sandbox issues)
+# Remove Nvidia's conflicting libgbm shim to restore Puppeteer headless GPU support
 RUN rm -f /usr/local/nvidia/lib/libgbm.so.1 /usr/local/nvidia/lib64/libgbm.so.1
 
-# Install sndio manually (missing from base repo)
+# Patch in older sndio version manually
 RUN wget -qO /tmp/libsndio6.1.deb http://security.ubuntu.com/ubuntu/pool/universe/s/sndio/libsndio6.1_1.1.0-3_amd64.deb && \
     dpkg -i /tmp/libsndio6.1.deb && rm /tmp/libsndio6.1.deb
 
-# Install Node.js
+# Install Node.js from maintained NodeSource
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x -o nodesource_setup.sh && \
     bash nodesource_setup.sh && \
     apt-get install -y --no-install-recommends nodejs && \
     rm nodesource_setup.sh && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/*
 
-# Python + Whisper + Torch GPU
+# Install Python dependencies and Whisper with GPU-enabled PyTorch
 RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel && \
     pip3 install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cu118 \
@@ -111,7 +112,7 @@ RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel && \
     chown -R node:node "$WHISPER_MODEL_PATH" && \
     python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])"
 
-# Install Puppeteer, n8n, and sandbox patch
+# Install n8n and Puppeteer + headless sandboxing fixes
 RUN npm install -g --unsafe-perm \
     n8n@1.104.1 \
     puppeteer@24.14.0 \
@@ -124,11 +125,11 @@ RUN npm install -g --unsafe-perm \
     chown root:root /usr/local/sbin/chrome-devel-sandbox && \
     chmod 4755 /usr/local/sbin/chrome-devel-sandbox
 
-# Create shared and cache dirs
+# Set up workspace + shared data area
 RUN mkdir -p "$HOME/.cache/n8n/public" /data/shared/{videos,audio,transcripts} && \
     chown -R node:node "$HOME" /data/shared && chmod -R 770 /data/shared "$HOME/.cache"
 
-# Validate FFmpeg build + GPU support
+# Verify FFmpeg GPU support and missing dependencies
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" && \
     (echo "❌ unresolved FFmpeg libs" >&2 && exit 1) || echo "✅ FFmpeg libs OK" && \
     ffmpeg -hide_banner -hwaccels | grep -q "cuda" && echo "✅ FFmpeg GPU OK" || (echo "❌ FFmpeg GPU check failed" >&2 && exit 1)
