@@ -36,7 +36,6 @@ ENV TZ=Australia/Brisbane \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
     TORCH_HOME=/opt/torch_cache \
-    PUPPETEER_SKIP_DOWNLOAD=true \
     LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 
 # Copy compiled FFmpeg
@@ -95,7 +94,9 @@ RUN pip3 install --no-cache-dir \
 # Whisper
 RUN pip3 install --no-cache-dir tiktoken openai-whisper && \
     mkdir -p "$WHISPER_MODEL_PATH" && \
-    chown -R node:node "$WHISPER_MODEL_PATH" && rm -rf /root/.cache/pip/* /tmp/*
+    chown -R node:node "$WHISPER_MODEL_PATH" && \
+    python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" && \
+    rm -rf /root/.cache/pip/* /tmp/*
 
 # Puppeteer + n8n
 RUN npm install -g --unsafe-perm \
