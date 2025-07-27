@@ -7,6 +7,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential yasm cmake libtool libc6-dev libnuma-dev pkg-config git wget \
+      libass-dev libass9 \
       libvorbis-dev libopus-dev libmp3lame-dev libpostproc-dev && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* && \
     git clone --depth 1 --branch n11.1.5.3 https://github.com/FFmpeg/nv-codec-headers.git nv-codec-headers && \
@@ -23,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       --enable-protocol=file,pipe \
       --enable-demuxer=wav,mp3,flac,aac,ogg,opus,mov,matroska \
       --enable-decoder=pcm_s16le,pcm_s16be,pcm_s24le,pcm_s32le,flac,mp3,aac,opus,vorbis \
-      --enable-libvorbis --enable-libopus --enable-libmp3lame \
+      --enable-libass --enable-libvorbis --enable-libopus --enable-libmp3lame \
       --enable-gpl --enable-nonfree && \
     make -j"$(nproc)" && make install && \
     cd .. && rm -rf ffmpeg /tmp/*
@@ -50,6 +51,9 @@ COPY --from=builder /usr/local/lib/libsw* /usr/local/lib/
 COPY --from=builder /usr/local/lib/libpostproc* /usr/local/lib/
 COPY --from=builder /usr/local/include/libav* /usr/local/include/
 COPY --from=builder /usr/local/include/libsw* /usr/local/include/
+
+# FFmpeg shared libraries
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libass* /usr/local/lib/
 COPY --from=builder /usr/lib/x86_64-linux-gnu/libvorbis* /usr/local/lib/
 COPY --from=builder /usr/lib/x86_64-linux-gnu/libopus* /usr/local/lib/
 COPY --from=builder /usr/lib/x86_64-linux-gnu/libmp3lame* /usr/local/lib/
