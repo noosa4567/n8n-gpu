@@ -8,13 +8,13 @@ on:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest-xl  # ✅ Larger disk (~100GB) runner
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
 
     steps:
-      - name: Free up disk space first (~20-30GB)
+      - name: Free up disk space (~20–30 GB)
         uses: kfir4444/free-disk-space@main
         with:
           android: true
@@ -31,7 +31,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to GitHub Container Registry
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -45,6 +45,6 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/n8n-gpu:latest
-          provenance: false  # Disable SBOM/attestations to save space
+          provenance: false
           cache-from: type=gha
           cache-to: type=gha,mode=min,ignore-error=true
