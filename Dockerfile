@@ -7,7 +7,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential yasm cmake libtool libc6-dev libnuma-dev pkg-config git wget \
-      libass-dev libvorbis-dev libopus-dev libmp3lame-dev && \
+      libass-dev libvorbis-dev libopus-dev libmp3lame-dev libpostproc-dev && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* && \
     git clone --depth 1 --branch n11.1.5.3 https://github.com/FFmpeg/nv-codec-headers.git nv-codec-headers && \
     cd nv-codec-headers && make && make install && cd .. && rm -rf nv-codec-headers && \
@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       --enable-shared \
       --disable-static \
       --enable-ffmpeg \
+      --enable-postproc \
       --enable-protocol=file \
       --enable-demuxer=wav,mp3,flac,aac,ogg,opus,mov,matroska \
       --enable-decoder=pcm_s16le,pcm_s16be,pcm_s24le,pcm_s32le,flac,mp3,aac,opus,vorbis \
@@ -39,14 +40,14 @@ ENV TZ=Australia/Brisbane \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
     TORCH_HOME=/opt/torch_cache \
     LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64 \
-    DOCKER_BUILDKIT=1 \
-    COMPRESSION_LEVEL=9 \
-    PYTHONDONTWRITEBYTECODE=1
+    NODE_PATH=/usr/local/lib/node_modules \
+    CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
 
 # Copy compiled FFmpeg
 COPY --from=builder /usr/local/bin/ff* /usr/local/bin/
 COPY --from=builder /usr/local/lib/libav* /usr/local/lib/
 COPY --from=builder /usr/local/lib/libsw* /usr/local/lib/
+COPY --from=builder /usr/local/lib/libpostproc* /usr/local/lib/
 COPY --from=builder /usr/local/include/libav* /usr/local/include/
 COPY --from=builder /usr/local/include/libsw* /usr/local/include/
 RUN ldconfig
@@ -56,7 +57,7 @@ RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" && chown -R node:node "$HOME"
 
-# Mesa + Puppeteer dependencies (libgbm fix)
+# Mesa + Puppeteer dependencies (added FFmpeg external runtime libs)
 RUN apt-get update && apt-get install -y --no-install-recommends \
       software-properties-common && \
     add-apt-repository ppa:oibaf/graphics-drivers -y && \
@@ -73,7 +74,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libglib2.0-0 libgtk-3-0 libnspr4 libnss3 \
       libpangocairo-1.0-0 libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
       fonts-liberation lsb-release xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
-      libnvidia-egl-gbm1 && \
+      libnvidia-egl-gbm1 libass9 libmp3lame0 libopus0 libvorbis0a libvorbisenc2 && \
     apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /usr/share/man/* /usr/share/doc/* /var/log/* /var/tmp/*
 
 # Remove NVIDIA’s conflicting libgbm
@@ -103,7 +104,7 @@ RUN pip3 install --no-cache-dir tiktoken openai-whisper && \
     python3 -c "import os, whisper; whisper.load_model('base', download_root=os.environ['WHISPER_MODEL_PATH'])" && \
     rm -rf /root/.cache/pip/* /tmp/*
 
-# Puppeteer + n8n
+# Puppeteer + n8n (with SUID sandbox setup for fallback)
 RUN npm install -g --unsafe-perm \
       n8n@1.104.1 \
       puppeteer@24.14.0 \
@@ -112,7 +113,13 @@ RUN npm install -g --unsafe-perm \
       --legacy-peer-deps && \
     npm cache clean --force && \
     mkdir -p "$PUPPETEER_CACHE_DIR" && \
-    chown -R node:node "$PUPPETEER_CACHE_DIR" "$(npm root -g)" && rm -rf /tmp/*
+    chown -R node:node "$PUPPETEER_CACHE_DIR" "$(npm root -g)" && rm -rf /tmp/* && \
+    # Set up SUID sandbox
+    chrome_path=$(node -e "console.log(require('puppeteer').executablePath())") && \
+    sandbox_dir=$(dirname "$chrome_path") && \
+    cp "$sandbox_dir/chrome_sandbox" /usr/local/sbin/chrome-devel-sandbox && \
+    chown root:root /usr/local/sbin/chrome-devel-sandbox && \
+    chmod 4755 /usr/local/sbin/chrome-devel-sandbox
 
 # Runtime dirs
 RUN mkdir -p "$HOME/.cache/n8n/public" /data/shared/{videos,audio,transcripts} && \
