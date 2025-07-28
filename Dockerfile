@@ -10,7 +10,8 @@
 #
 # Optional Enhancements:
 # - ✅ Healthcheck added (checks n8n healthz endpoint)
-# - 🟡 Image size: ~5–7GB; can be optimized with alpine/multi-stage stripping
+# - ⚫ Image size: ~5–7GB; can be optimized with alpine/multi-stage stripping
+# - ✅ Optional debug layer for nvidia-smi (commented by default)
 #######################################################################
 
 ###############################
@@ -21,18 +22,15 @@ FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS builder
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH=/usr/local/cuda/bin:${PATH}
 
-# Install build dependencies and libraries required for FFmpeg with NVENC/NVDEC support
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential git pkg-config yasm cmake libtool nasm \
     libnuma-dev libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev \
     libopus-dev libvorbis-dev libvpx-dev libpostproc-dev curl && \
     rm -rf /var/lib/apt/lists/*
 
-# Install NVIDIA codec headers (specific branch compatible with CUDA 11.8)
 RUN git clone --branch n11.1.5.3 https://github.com/FFmpeg/nv-codec-headers.git && \
     cd nv-codec-headers && make -j"$(nproc)" && make install && cd .. && rm -rf nv-codec-headers
 
-# Clone and build FFmpeg 7.1 with GPU acceleration and selected codecs
 RUN git clone --depth 1 --branch n7.1 https://git.ffmpeg.org/ffmpeg.git && \
     cd ffmpeg && \
     ./configure \
@@ -58,7 +56,7 @@ ENV HOME=/home/node \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
     LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 
-# Install runtime system libraries (for Python, Puppeteer, and n8n)
+# Install system dependencies (excluding nvidia-smi to avoid unresolved package errors)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git wget gnupg \
     python3.10 python3.10-venv python3.10-dev python3-pip \
@@ -70,53 +68,62 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfontconfig1 libegl1-mesa libgl1-mesa-dri \
     libpangocairo-1.0-0 libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
     fonts-liberation lsb-release xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
-    libnvidia-egl-gbm1 tini nvidia-smi && \
+    libnvidia-egl-gbm1 tini && \
     rm -rf /var/lib/apt/lists/*
 
-# Strip NVIDIA GBM extensions (which cause Puppeteer to segfault in headless mode)
+# Remove NVIDIA GBM libraries that crash Puppeteer
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
     /usr/local/nvidia/lib/*gbm* \
     /usr/local/nvidia/lib64/*gbm* \
     /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
 
-# Create non-root user for runtime execution
+# Create non-root user and workspace
 RUN useradd -m node && mkdir -p /data && chown -R node:node /data
 
-# Copy compiled FFmpeg and shared libraries
+# Copy FFmpeg build from builder stage
 COPY --from=builder /usr/local /usr/local
 
-# Install Node.js LTS (v20), n8n, Puppeteer, and custom n8n node extensions
+# Install Node.js 20.x and n8n / Puppeteer
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g --unsafe-perm n8n@1.104.1 puppeteer@24.15.0 n8n-nodes-puppeteer@1.4.1 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Whisper (GPU) and supporting PyTorch libraries (CUDA 11.8 wheels)
+# Install Whisper (GPU), Torch for CUDA 11.8
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
     python3.10 -m pip install git+https://github.com/openai/whisper.git
 
-# Pre-download both 'tiny' and 'base' Whisper models to avoid cold start and reduce runtime latency
+# Pre-download Whisper tiny model
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
-    python3.10 -c "import whisper; whisper.load_model('tiny', download_root='$WHISPER_MODEL_PATH')" && \
-    python3.10 -c "import whisper; whisper.load_model('base', download_root='$WHISPER_MODEL_PATH')"
+    python3.10 -c "import whisper; whisper.load_model('tiny', download_root='$WHISPER_MODEL_PATH')"
 
-# Setup cache folders and adjust permissions for Puppeteer and n8n shared data
+# Setup Puppeteer cache and shared data dir
 RUN mkdir -p "$PUPPETEER_CACHE_DIR" /data/shared && \
     chown -R node:node "$HOME" /data/shared
 
-# Sanity check: ensure FFmpeg GPU support is linked correctly
+# Sanity check: FFmpeg and CUDA available
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" && \
     (echo "❌ FFmpeg library linking failed" >&2 && exit 1) || echo "✅ FFmpeg libraries resolved" && \
     ffmpeg -version && \
     ffmpeg -hide_banner -hwaccels | grep -q "cuda" && echo "✅ FFmpeg GPU OK" || (echo "❌ FFmpeg GPU missing" >&2 && exit 1)
 
-# Optional production healthcheck: verifies n8n /healthz endpoint responds
+# Optional production healthcheck: verifies n8n status
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl --fail http://localhost:5678/healthz || exit 1
 
-# Set user, working directory, and default process to launch n8n with tini signal proxy
+# Default container runtime config
 USER node
 WORKDIR /data
 ENTRYPOINT ["tini", "--", "n8n", "start"]
 CMD []
+
+
+###############################
+# Stage 3: [Optional] Debug Layer (nvidia-smi)
+###############################
+FROM runtime AS debug
+RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb && \
+    dpkg -i cuda-keyring_1.1-1_all.deb && rm cuda-keyring_1.1-1_all.deb && \
+    apt-get update && apt-get install -y nvidia-utils-535 && \
+    nvidia-smi || true
