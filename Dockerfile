@@ -1,35 +1,37 @@
-# #######################################################################
+#######################################################################
 # Multi-stage Dockerfile: GPU-enabled FFmpeg + Whisper + Puppeteer + n8n
-# Target platform: Ubuntu 22.04 + CUDA 11.8 + runtime-ready image
-# Subtitle rendering intentionally excluded (no libass)
+# Target: Ubuntu 22.04 + CUDA 11.8 + runtime-ready image
 #
-# Notes for QNAP NAS (QuTS Hero with NVIDIA P2200 GPU):
-# - P2200 is compatible with CUDA 11.8 (NVIDIA driver >=450 required).
-# - Enable GPU passthrough via Container Station settings or use --gpus all.
-# - 5GB VRAM: avoid Whisper large/v2 models (OOM risk); 'tiny' and 'base' are fine.
+# ✅ FFmpeg 7.1 compiled with GPU codecs
+# ✅ Whisper installed with CUDA and tiny model preloaded
+# ✅ Puppeteer with Mesa GBM (NVIDIA GBM removed)
+# ✅ n8n 1.104.1 installed
+# ✅ Healthcheck added
 #
-# Optional Enhancements:
-# - ✅ Healthcheck added (checks n8n healthz endpoint)
-# - 🟡 Image size: ~5–7GB; can be optimized with alpine/multi-stage stripping
+# ⚠️ Excludes subtitle rendering (no libass)
+# 🟡 Image ~5–7GB; optional size trimming via multi-stage/alpine stripping
 #######################################################################
 
 ###############################
-# Stage 1: Build FFmpeg with GPU support
+# Stage 1: Build FFmpeg with GPU
 ###############################
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH=/usr/local/cuda/bin:${PATH}
 
+# Install dependencies for FFmpeg build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential git pkg-config yasm cmake libtool nasm \
     libnuma-dev libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev \
     libopus-dev libvorbis-dev libvpx-dev libpostproc-dev curl && \
     rm -rf /var/lib/apt/lists/*
 
+# Install nv-codec-headers
 RUN git clone --branch n11.1.5.3 https://github.com/FFmpeg/nv-codec-headers.git && \
     cd nv-codec-headers && make -j"$(nproc)" && make install && cd .. && rm -rf nv-codec-headers
 
+# Clone and build FFmpeg 7.1 with GPU codecs
 RUN git config --global http.postBuffer 2097152000 && \
     (git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpeg || \
      (sleep 5 && git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpeg) || \
@@ -48,7 +50,7 @@ RUN git config --global http.postBuffer 2097152000 && \
     make -j"$(nproc)" && make install && cd .. && rm -rf ffmpeg
 
 ###############################
-# Stage 2: Runtime Image
+# Stage 2: Runtime
 ###############################
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04 AS runtime
 
@@ -58,7 +60,7 @@ ENV HOME=/home/node \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
     LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 
-# Install core runtime dependencies
+# Core dependencies for Python, Puppeteer, FFmpeg, Mesa GBM, etc.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common ca-certificates curl git wget gnupg \
     python3.10 python3.10-venv python3.10-dev python3-pip \
@@ -73,32 +75,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnvidia-egl-gbm1 tini && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Remove NVIDIA GBM libraries that crash Puppeteer
+# Remove NVIDIA GBM to avoid Puppeteer crash
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
     /usr/local/nvidia/lib/*gbm* \
     /usr/local/nvidia/lib64/*gbm* \
     /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
 
-# Create non-root user
+# Create node user and data folder
 RUN useradd -m node && mkdir -p /data && chown -R node:node /data
 
-# Copy built FFmpeg
+# Copy GPU-enabled FFmpeg from builder
 COPY --from=builder /usr/local /usr/local
 
-# Install shared libraries required by FFmpeg runtime
+# Install runtime shared libraries for FFmpeg
 RUN add-apt-repository universe && add-apt-repository multiverse && apt-get update && \
     apt-get install -y --no-install-recommends \
     libvpx7 libx264-163 libx265-199 libfdk-aac2 libmp3lame0 libopus0 libvorbis0a libvorbisenc2 libpostproc55 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Node.js + n8n + Puppeteer
+# Node.js, n8n, Puppeteer
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g --unsafe-perm n8n@1.104.1 puppeteer@24.15.0 n8n-nodes-puppeteer@1.4.1 && \
     npm cache clean --force && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Whisper with CUDA
+# Whisper with CUDA
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
     python3.10 -m pip install git+https://github.com/openai/whisper.git && \
@@ -108,35 +110,25 @@ RUN python3.10 -m pip install --upgrade pip && \
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
     python3.10 -c "import whisper; whisper.load_model('tiny', download_root='$WHISPER_MODEL_PATH')"
 
-# Puppeteer cache + shared dir
+# Setup Puppeteer cache + data volume
 RUN mkdir -p "$PUPPETEER_CACHE_DIR" /data/shared && \
     chown -R node:node "$HOME" /data/shared
 
-# Validate FFmpeg
+# ✅ Validate FFmpeg GPU support
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" && \
     (echo "❌ FFmpeg library linking failed" >&2 && exit 1) || echo "✅ FFmpeg libraries resolved" && \
     ffmpeg -version && \
     ffmpeg -hide_banner -hwaccels | grep -q "cuda" && echo "✅ FFmpeg GPU OK" || (echo "❌ FFmpeg GPU missing" >&2 && exit 1)
 
-# n8n healthcheck
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl --fail http://localhost:5678/healthz || exit 1
+# ✅ Healthcheck: confirms n8n is running
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:5678/healthz || exit 1
 
+# Final config
 USER node
 WORKDIR $HOME
 EXPOSE 5678
+
+# ✅ Use tini to init and forward signals; no 'start' subcommand!
 ENTRYPOINT ["tini", "--", "n8n"]
 CMD []
-
-###############################
-# Stage 3: Optional Debug Layer (nvidia-smi enabled)
-###############################
-#FROM runtime AS debug
-#USER root
-#RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb && \
-#    dpkg -i cuda-keyring_1.1-1_all.deb && rm cuda-keyring_1.1-1_all.deb && \
-#    apt-get update && apt-get install -y nvidia-utils-535 && \
-#    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Run nvidia-smi at runtime, not build time, to avoid NVML errors during build
-#CMD ["nvidia-smi"]
