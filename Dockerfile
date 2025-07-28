@@ -78,7 +78,8 @@ RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
     /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
 
 # Create non-root user
-RUN useradd -m node && mkdir -p /data && chown -R node:node /data
+RUN groupadd -r node && useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
+    mkdir -p "$HOME/.n8n" && chown -R node:node "$HOME"
 
 # Copy built FFmpeg
 COPY --from=builder /usr/local /usr/local
@@ -121,8 +122,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
 
 USER node
-WORKDIR /data
-ENTRYPOINT ["tini", "--", "n8n", "start"]
+WORKDIR $HOME
+EXPOSE 5678
+ENTRYPOINT ["tini", "--", "n8n"]
 CMD []
 
 ###############################
