@@ -1,24 +1,19 @@
 # syntax=docker/dockerfile:1
 
 ###############################################################################
-# Stage 1: Build FFmpeg with CUDA/NVENC (No libass)
+# Stage 1: Builder — Build FFmpeg with GPU support but no subtitle support
 ###############################################################################
-FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS builder
+FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS builder
 
-ARG DEBIAN_FRONTEND=noninteractive
-
-# Install build dependencies for FFmpeg (excluding libass)
+# Install dependencies for compiling FFmpeg with required codecs
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential yasm cmake libtool libc6-dev pkg-config git wget curl \
-    libvorbis-dev libopus-dev libmp3lame-dev libx264-dev libx265-dev \
-    libvpx-dev libfdk-aac-dev && \
+    build-essential git pkg-config cmake \
+    yasm nasm libtool autoconf automake \
+    libx264-dev libx265-dev libfdk-aac-dev libvpx-dev libopus-dev libmp3lame-dev \
+    zlib1g-dev libnuma-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Install NVIDIA codec headers for NVENC/NVDEC support
-RUN git clone --depth 1 --branch n11.1.5.3 https://github.com/FFmpeg/nv-codec-headers.git && \
-    cd nv-codec-headers && make && make install && cd .. && rm -rf nv-codec-headers
-
-# Build FFmpeg (excluding subtitle rendering)
+# Build FFmpeg with GPU support, no subtitle rendering (no libass)
 RUN git clone --depth 1 --branch n7.1 https://git.ffmpeg.org/ffmpeg.git && \
     cd ffmpeg && \
     ./configure \
@@ -29,95 +24,71 @@ RUN git clone --depth 1 --branch n7.1 https://git.ffmpeg.org/ffmpeg.git && \
       --extra-libs="-lpthread -lm" \
       --enable-cuda --enable-cuvid --enable-nvenc \
       --enable-nonfree --enable-gpl --enable-shared --enable-postproc \
-      --enable-libmp3lame --enable-libopus --enable-libvorbis \
-      --enable-libx264 --enable-libx265 --enable-libfdk-aac --enable-libvpx && \
+      --enable-libx264 --enable-libx265 --enable-libfdk-aac --enable-libvpx \
+      --enable-libopus --enable-libmp3lame && \
     make -j"$(nproc)" && make install && \
     cd .. && rm -rf ffmpeg
 
-# Collect shared libs for runtime
+# Collect only FFmpeg shared lib dependencies
 RUN mkdir -p /ffmpeg-libs && \
-    ldd /usr/local/bin/ffmpeg | awk '{print $3}' | grep -E '^/lib|^/usr/lib' | xargs -I{} cp --parents {} /ffmpeg-libs || true
+    ldd /usr/local/bin/ffmpeg | awk '{print $3}' | grep -E '^/lib|^/usr/lib' | xargs -I{} cp -v --parents {} /ffmpeg-libs || true
 
 ###############################################################################
-# Stage 2: Runtime Image with FFmpeg, Puppeteer, Whisper, n8n
+# Stage 2: Runtime — Minimal base image with GPU FFmpeg + Puppeteer + n8n + Whisper
 ###############################################################################
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
-ARG DEBIAN_FRONTEND=noninteractive
+# Set environment variables
 ENV TZ=Australia/Brisbane \
     HOME=/home/node \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
-    TORCH_HOME=/opt/torch_cache \
-    LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/lib/x86_64-linux-gnu \
-    NODE_PATH=/usr/local/lib/node_modules \
-    CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
+    LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu
 
-# Create non-root node user and working directory
-RUN groupadd -r node && \
-    useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
-    mkdir -p "$HOME/.n8n" && chown -R node:node "$HOME"
-
-# Copy FFmpeg binaries and required shared libs
-COPY --from=builder /usr/local /usr/local
-COPY --from=builder /ffmpeg-libs/lib /lib
-COPY --from=builder /ffmpeg-libs/usr/lib /usr/lib
-RUN ldconfig
-
-# Install Puppeteer and GUI/Chromium dependencies
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tini git curl ca-certificates gnupg wget xz-utils python3 python3-pip binutils \
-    libglib2.0-0 libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 \
-    libxss1 libxtst6 libgtk-3-0 libatk-bridge2.0-0 libatk1.0-0 libcups2 \
-    libdrm2 libgbm1 libasound2 libxshmfence1 libx11-6 libxext6 \
-    libxfixes3 libxrender1 libxcb1 libxcursor1 libxinerama1 libxv1 \
-    libfreetype6 libfontconfig1 libdbus-1-3 libexpat1 libharfbuzz0b \
-    libpango-1.0-0 libpangocairo-1.0-0 libthai0 libdatrie1 libsndio6.1 \
-    fonts-liberation xdg-utils libnvidia-egl-gbm1 && \
+    curl ca-certificates git wget jq unzip sudo \
+    libxext6 libx11-xcb1 libxcb1 libxcomposite1 libxdamage1 libxfixes3 \
+    libxrandr2 libgbm1 libnss3 libasound2 libatk-bridge2.0-0 libcups2 \
+    libdrm2 libgtk-3-0 libxss1 libxshmfence1 xdg-utils \
+    nodejs npm python3-pip && \
     rm -rf /var/lib/apt/lists/*
 
-# Remove NVIDIA's conflicting GBM libraries
-RUN rm -f /usr/local/nvidia/lib*/*gbm* /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
+# Add node user for n8n and Puppeteer
+RUN useradd -m node && mkdir -p /data && chown -R node:node /data
 
-# Install Node.js
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+# Install FFmpeg runtime files
+COPY --from=builder /usr/local /usr/local
+COPY --from=builder /ffmpeg-libs /
 
-# Install Whisper with GPU support
-RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip3 install --no-cache-dir \
-      --index-url https://download.pytorch.org/whl/cu118 \
-      torch==2.7.1+cu118 numpy==1.26.3 && \
-    pip3 install --no-cache-dir tiktoken openai-whisper==20250625 && \
-    mkdir -p "$WHISPER_MODEL_PATH" && \
-    chown -R node:node "$WHISPER_MODEL_PATH" && \
-    python3 -c "import whisper; whisper.load_model('base', download_root='$WHISPER_MODEL_PATH')"
+RUN ldconfig
 
-# Install Puppeteer and n8n
-RUN npm install -g --unsafe-perm \
-    puppeteer@24.15.0 \
-    n8n@1.103.2 \
-    n8n-nodes-puppeteer@1.4.1 \
-    ajv@8.17.1 --legacy-peer-deps && \
-    npm cache clean --force && \
-    mkdir -p "$PUPPETEER_CACHE_DIR" && \
-    chown -R node:node "$PUPPETEER_CACHE_DIR" "$(npm root -g)" && \
-    cp "$PUPPETEER_CACHE_DIR"/chrome/linux-*/chrome-linux64/chrome_sandbox "$CHROME_DEVEL_SANDBOX" && \
-    chown root:root "$CHROME_DEVEL_SANDBOX" && chmod 4755 "$CHROME_DEVEL_SANDBOX"
+# Optional sanity check — ensure FFmpeg is GPU-enabled and linked
+RUN ldd /usr/local/bin/ffmpeg | grep "not found" && (echo "❌ FFmpeg libs missing" && exit 1) || \
+    (ffmpeg -hide_banner -hwaccels | grep -q "cuda" && echo "✅ FFmpeg GPU OK") || \
+    (echo "❌ FFmpeg GPU not detected" && exit 1)
 
-# Setup directories and permissions
-RUN mkdir -p "$HOME/.cache/n8n/public" /data/shared/{videos,audio,transcripts} && \
-    chown -R node:node "$HOME" /data/shared && chmod -R 770 /data/shared "$HOME/.cache"
+# Install n8n
+RUN npm install -g n8n
 
-# Validate FFmpeg and GPU
-RUN ldd /usr/local/bin/ffmpeg && \
-    ffmpeg -hide_banner -hwaccels | grep -q cuda && echo "✅ FFmpeg GPU OK" || (echo "❌ GPU not detected" && exit 1)
-
-# Set execution context
+# Install Puppeteer in a way that avoids NVIDIA GBM
 USER node
-WORKDIR $HOME
-EXPOSE 5678
+RUN mkdir -p "${PUPPETEER_CACHE_DIR}" && \
+    npm install puppeteer && \
+    node -e "console.log(require('puppeteer').executablePath())"
 
-ENTRYPOINT ["tini", "--", "n8n", "start"]
-CMD []
+# Install Whisper with GPU
+USER root
+RUN pip3 install torch --index-url https://download.pytorch.org/whl/cu118 && \
+    pip3 install git+https://github.com/openai/whisper.git
+
+# Create data and cache directories
+RUN mkdir -p "${HOME}/.cache/n8n/public" /data/shared/{videos,audio,transcripts} && \
+    chown -R node:node "${HOME}" /data/shared && chmod -R 770 /data/shared "${HOME}/.cache"
+
+USER node
+WORKDIR /data
+
+# ENTRYPOINT & CMD — Preserve original intent
+ENTRYPOINT ["n8n"]
+CMD ["start"]
