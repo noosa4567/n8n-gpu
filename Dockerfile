@@ -8,10 +8,10 @@
 # - Enable GPU passthrough via Container Station settings or use --gpus all.
 # - 5GB VRAM: avoid Whisper large/v2 models (OOM risk); 'tiny' and 'base' are fine.
 #
-# Optional Enhancements:
+# Enhancements:
 # - ✅ Healthcheck added (checks n8n healthz endpoint)
 # - ⚫ Image size: ~5–7GB; can be optimized with alpine/multi-stage stripping
-# - ✅ Debug layer included for nvidia-smi and GPU diagnostics
+# - ✅ Optional debug layer for nvidia-smi (fixed for root privileges)
 #######################################################################
 
 ###############################
@@ -69,13 +69,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpangocairo-1.0-0 libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
     fonts-liberation lsb-release xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
     libnvidia-egl-gbm1 tini && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Remove NVIDIA GBM libraries that crash Puppeteer
-RUN rm -rf /usr/share/egl/egl_external_platform.d/nvidia \
-    /usr/local/nvidia/lib/gbm \
-    /usr/local/nvidia/lib64/gbm \
-    /usr/lib/x86_64-linux-gnu/nvidiagbm*
+RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
+    /usr/local/nvidia/lib/*gbm* \
+    /usr/local/nvidia/lib64/*gbm* \
+    /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
 
 # Create non-root user
 RUN useradd -m node && mkdir -p /data && chown -R node:node /data
@@ -87,18 +87,20 @@ COPY --from=builder /usr/local /usr/local
 RUN add-apt-repository universe && add-apt-repository multiverse && apt-get update && \
     apt-get install -y --no-install-recommends \
     libvpx7 libx264-163 libx265-199 libfdk-aac2 libmp3lame0 libopus0 libvorbis0a libvorbisenc2 libpostproc55 && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Node.js + n8n + Puppeteer
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g --unsafe-perm n8n@1.104.1 puppeteer@24.15.0 n8n-nodes-puppeteer@1.4.1 && \
+    npm cache clean --force && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install Whisper with CUDA
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
-    python3.10 -m pip install git+https://github.com/openai/whisper.git
+    python3.10 -m pip install git+https://github.com/openai/whisper.git && \
+    pip cache purge
 
 # Pre-download Whisper tiny model
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
@@ -116,7 +118,7 @@ RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" && \
 
 # n8n healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl --fail http://localhost:5678/healthz || exit 1
+    CMD curl --fail http://localhost:5678/healthz || exit 1
 
 USER node
 WORKDIR /data
@@ -127,7 +129,9 @@ CMD []
 # Stage 3: Optional Debug Layer (nvidia-smi enabled)
 ###############################
 FROM runtime AS debug
+USER root
 RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb && \
     dpkg -i cuda-keyring_1.1-1_all.deb && rm cuda-keyring_1.1-1_all.deb && \
     apt-get update && apt-get install -y nvidia-utils-535 && \
-    nvidia-smi || true
+    apt-get clean && rm -rf /var/lib/apt/lists/* && \
+    nvidia-smi
