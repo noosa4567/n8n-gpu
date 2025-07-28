@@ -8,10 +8,9 @@
 # - Enable GPU passthrough via Container Station settings or use --gpus all.
 # - 5GB VRAM: avoid Whisper large/v2 models (OOM risk); 'tiny' and 'base' are fine.
 #
-# Enhancements:
+# Optional Enhancements:
 # - ✅ Healthcheck added (checks n8n healthz endpoint)
-# - ⚫ Image size: ~5–7GB; can be optimized with alpine/multi-stage stripping
-# - ✅ Optional debug layer for nvidia-smi (fixed for root privileges)
+# - 🟡 Image size: ~5–7GB; can be optimized with alpine/multi-stage stripping
 #######################################################################
 
 ###############################
@@ -31,7 +30,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN git clone --branch n11.1.5.3 https://github.com/FFmpeg/nv-codec-headers.git && \
     cd nv-codec-headers && make -j"$(nproc)" && make install && cd .. && rm -rf nv-codec-headers
 
-RUN git clone --depth 1 --branch n7.1 https://git.ffmpeg.org/ffmpeg.git && \
+RUN git config --global http.postBuffer 2097152000 && \
+    (git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpeg || \
+     (sleep 5 && git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpeg) || \
+     (sleep 10 && git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpeg)) && \
     cd ffmpeg && \
     ./configure \
       --prefix=/usr/local \
@@ -78,8 +80,7 @@ RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
     /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
 
 # Create non-root user
-RUN groupadd -r node && useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
-    mkdir -p "$HOME/.n8n" && chown -R node:node "$HOME"
+RUN useradd -m node && mkdir -p /data && chown -R node:node /data
 
 # Copy built FFmpeg
 COPY --from=builder /usr/local /usr/local
@@ -122,9 +123,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
 
 USER node
-WORKDIR $HOME
-EXPOSE 5678
-ENTRYPOINT ["tini", "--", "n8n"]
+WORKDIR /data
+ENTRYPOINT ["tini", "--", "n8n", "start"]
 CMD []
 
 ###############################
