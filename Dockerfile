@@ -128,10 +128,12 @@ CMD []
 ###############################
 # Stage 3: Optional Debug Layer (nvidia-smi enabled)
 ###############################
-FROM runtime AS debug
-USER root
-RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb && \
-    dpkg -i cuda-keyring_1.1-1_all.deb && rm cuda-keyring_1.1-1_all.deb && \
-    apt-get update && apt-get install -y nvidia-utils-535 && \
-    apt-get clean && rm -rf /var/lib/apt/lists/* && \
-    nvidia-smi
+#FROM runtime AS debug
+#USER root
+#RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb && \
+#    dpkg -i cuda-keyring_1.1-1_all.deb && rm cuda-keyring_1.1-1_all.deb && \
+#    apt-get update && apt-get install -y nvidia-utils-535 && \
+#    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Run nvidia-smi at runtime, not build time, to avoid NVML errors during build
+#CMD ["nvidia-smi"]
