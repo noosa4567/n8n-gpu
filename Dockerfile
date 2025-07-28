@@ -11,7 +11,7 @@
 # Optional Enhancements:
 # - ✅ Healthcheck added (checks n8n healthz endpoint)
 # - ⚫ Image size: ~5–7GB; can be optimized with alpine/multi-stage stripping
-# - ✅ Optional debug layer for nvidia-smi (commented by default)
+# - ✅ Debug layer included for nvidia-smi and GPU diagnostics
 #######################################################################
 
 ###############################
@@ -56,9 +56,9 @@ ENV HOME=/home/node \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
     LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 
-# Install system dependencies (excluding nvidia-smi to avoid unresolved package errors)
+# Install core runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl git wget gnupg \
+    software-properties-common ca-certificates curl git wget gnupg \
     python3.10 python3.10-venv python3.10-dev python3-pip \
     libglib2.0-0 libnss3 libxss1 libasound2 libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 \
     libdrm2 libxkbcommon0 libgbm1 libxcomposite1 libxrandr2 libxdamage1 libx11-xcb1 \
@@ -72,24 +72,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 # Remove NVIDIA GBM libraries that crash Puppeteer
-RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
-    /usr/local/nvidia/lib/*gbm* \
-    /usr/local/nvidia/lib64/*gbm* \
-    /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
+RUN rm -rf /usr/share/egl/egl_external_platform.d/nvidia \
+    /usr/local/nvidia/lib/gbm \
+    /usr/local/nvidia/lib64/gbm \
+    /usr/lib/x86_64-linux-gnu/nvidiagbm*
 
-# Create non-root user and workspace
+# Create non-root user
 RUN useradd -m node && mkdir -p /data && chown -R node:node /data
 
-# Copy FFmpeg build from builder stage
+# Copy built FFmpeg
 COPY --from=builder /usr/local /usr/local
 
-# Install Node.js 20.x and n8n / Puppeteer
+# Install shared libraries required by FFmpeg runtime
+RUN add-apt-repository universe && add-apt-repository multiverse && apt-get update && \
+    apt-get install -y --no-install-recommends \
+    libvpx7 libx264-163 libx265-199 libfdk-aac2 libmp3lame0 libopus0 libvorbis0a libvorbisenc2 libpostproc55 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Node.js + n8n + Puppeteer
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g --unsafe-perm n8n@1.104.1 puppeteer@24.15.0 n8n-nodes-puppeteer@1.4.1 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Whisper (GPU), Torch for CUDA 11.8
+# Install Whisper with CUDA
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
     python3.10 -m pip install git+https://github.com/openai/whisper.git
@@ -98,29 +104,27 @@ RUN python3.10 -m pip install --upgrade pip && \
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
     python3.10 -c "import whisper; whisper.load_model('tiny', download_root='$WHISPER_MODEL_PATH')"
 
-# Setup Puppeteer cache and shared data dir
+# Puppeteer cache + shared dir
 RUN mkdir -p "$PUPPETEER_CACHE_DIR" /data/shared && \
     chown -R node:node "$HOME" /data/shared
 
-# Sanity check: FFmpeg and CUDA available
+# Validate FFmpeg
 RUN ldd /usr/local/bin/ffmpeg | grep -q "not found" && \
     (echo "❌ FFmpeg library linking failed" >&2 && exit 1) || echo "✅ FFmpeg libraries resolved" && \
     ffmpeg -version && \
     ffmpeg -hide_banner -hwaccels | grep -q "cuda" && echo "✅ FFmpeg GPU OK" || (echo "❌ FFmpeg GPU missing" >&2 && exit 1)
 
-# Optional production healthcheck: verifies n8n status
+# n8n healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl --fail http://localhost:5678/healthz || exit 1
 
-# Default container runtime config
 USER node
 WORKDIR /data
 ENTRYPOINT ["tini", "--", "n8n", "start"]
 CMD []
 
-
 ###############################
-# Stage 3: [Optional] Debug Layer (nvidia-smi)
+# Stage 3: Optional Debug Layer (nvidia-smi enabled)
 ###############################
 FROM runtime AS debug
 RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb && \
