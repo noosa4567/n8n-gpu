@@ -123,8 +123,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
 
 USER node
-WORKDIR /data
-ENTRYPOINT ["tini", "--", "n8n", "start"]
+WORKDIR $HOME
+EXPOSE 5678
+ENTRYPOINT ["tini", "--", "n8n"]
 CMD []
 
 ###############################
