@@ -15,9 +15,38 @@
 #######################################################################
 
 ###############################
-# Stage 1: FFmpeg with GPU (pre-built to avoid linking issues)
+# Stage 1: Build FFmpeg with GPU support
 ###############################
-FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
+FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH=/usr/local/cuda/bin:${PATH}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential git pkg-config yasm cmake libtool nasm \
+    libnuma-dev libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev \
+    libopus-dev libvorbis-dev libvpx-dev libpostproc-dev curl && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN git clone --branch n11.1.5.3 https://github.com/FFmpeg/nv-codec-headers.git && \
+    cd nv-codec-headers && make -j"$(nproc)" && make install && cd .. && rm -rf nv-codec-headers
+
+RUN git config --global http.postBuffer 2097152000 && \
+    (git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpeg || \
+     (sleep 5 && git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpeg) || \
+     (sleep 10 && git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpeg)) && \
+    cd ffmpeg && \
+    ./configure \
+      --prefix=/usr/local \
+      --pkg-config-flags="--static" \
+      --extra-cflags="-I/usr/local/cuda/include" \
+      --extra-ldflags="-L/usr/local/cuda/lib64" \
+      --extra-libs="-lpthread -lm" \
+      --enable-cuda --enable-cuvid --enable-nvenc \
+      --enable-nonfree --enable-gpl --enable-shared --enable-postproc \
+      --enable-libx264 --enable-libx265 --enable-libfdk-aac --enable-libvpx \
+      --enable-libopus --enable-libmp3lame --enable-libvorbis && \
+    make -j"$(nproc)" && make install && cd .. && rm -rf ffmpeg
 
 ###############################
 # Stage 2: Runtime Image
@@ -30,10 +59,10 @@ ENV HOME=/home/node \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
     LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 
-# Install core runtime dependencies + binutils for debugging
+# Install core runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common ca-certificates curl git wget gnupg \
-    python3.10 python3.10-venv python3.10-dev python3-pip binutils \
+    python3.10 python3.10-venv python3.10-dev python3-pip \
     libglib2.0-0 libnss3 libxss1 libasound2 libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 \
     libdrm2 libxkbcommon0 libgbm1 libxcomposite1 libxrandr2 libxdamage1 libx11-xcb1 \
     libva2 libva-x11-2 libva-drm2 libva-wayland2 libvdpau1 \
@@ -45,35 +74,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnvidia-egl-gbm1 tini && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Add PPA for Mesa updates
-RUN add-apt-repository ppa:oibaf/graphics-drivers -y && apt-get update && apt-get upgrade -y && apt-get clean && rm -rf /var/lib/apt/lists/*
-
 # Remove NVIDIA GBM libraries that crash Puppeteer
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
     /usr/local/nvidia/lib/*gbm* \
     /usr/local/nvidia/lib64/*gbm* \
     /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
 
-# Create node user with video group and .n8n home
-RUN groupadd -r node \
- && useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node \
- && mkdir -p "$HOME/.n8n" \
- && chown -R node:node "$HOME"
+# Create non-root user
+RUN useradd -m node && mkdir -p /data && chown -R node:node /data
 
-# Copy pre-built FFmpeg
-COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/
-COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/
-COPY --from=ffmpeg /usr/local/lib/ /usr/local/lib/
-RUN ldconfig && rm -f /usr/local/lib/lib{asound,atk,atspi,cairo,cups,dbus,expat,fontconfig,gbm,glib,gtk,nspr,nss,pango,stdc++,x11,xcb,xcomposite,xcursor,xdamage,xext,xfixes,xi,xrandr,xrender,xss,xtst,harfbuzz,fribidi,thai,datrie,drm,wayland,EGL,GLES,glapi,va,vdpau,sndio,freetype}* && ldconfig
+# Copy built FFmpeg
+COPY --from=builder /usr/local /usr/local
 
-# Install missing FFmpeg deps (libass9, libSDL2, libXv1)
+# Install shared libraries required by FFmpeg runtime
 RUN add-apt-repository universe && add-apt-repository multiverse && apt-get update && \
-    apt-get install -y --no-install-recommends libass9 libSDL2-2.0-0 libXv1 && \
+    apt-get install -y --no-install-recommends \
+    libvpx7 libx264-163 libx265-199 libfdk-aac2 libmp3lame0 libopus0 libvorbis0a libvorbisenc2 libpostproc55 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Install libsndio6.1 (from WORKING Puppeteer)
-RUN wget -qO /tmp/libsndio6.1.deb http://security.ubuntu.com/ubuntu/pool/universe/s/sndio/libsndio6.1_1.1.0-3_amd64.deb && \
-    dpkg -i /tmp/libsndio6.1.deb && rm /tmp/libsndio6.1.deb
 
 # Node.js + n8n + Puppeteer
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
@@ -81,13 +98,6 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     npm install -g --unsafe-perm n8n@1.104.1 puppeteer@24.15.0 n8n-nodes-puppeteer@1.4.1 && \
     npm cache clean --force && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Force Puppeteer Chrome download and sandbox chown
-RUN npx puppeteer browsers install chrome && \
-    chown -R node:node "$PUPPETEER_CACHE_DIR" && \
-    cp $PUPPETEER_CACHE_DIR/chrome/linux-*/chrome-linux64/chrome_sandbox /usr/local/sbin/chrome-devel-sandbox && \
-    chown root:root /usr/local/sbin/chrome-devel-sandbox && \
-    chmod 4755 /usr/local/sbin/chrome-devel-sandbox
 
 # Whisper with CUDA
 RUN python3.10 -m pip install --upgrade pip && \
