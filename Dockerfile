@@ -58,7 +58,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfontconfig1 libegl1-mesa libgl1-mesa-dri \
     libpangocairo-1.0-0 libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
     fonts-liberation lsb-release xdg-utils libfreetype6 libatspi2.0-0 libgcc1 libstdc++6 \
-    libnvidia-egl-gbm1 tini && \
+    libnvidia-egl-gbm1 tini \
+    libsdl2-2.0-0 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ❌ Remove NVIDIA GBM libs that break Puppeteer
@@ -85,6 +86,7 @@ RUN add-apt-repository universe && add-apt-repository multiverse && apt-get upda
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g --unsafe-perm n8n@1.104.1 puppeteer@24.15.0 n8n-nodes-puppeteer@1.4.1 && \
+    npx puppeteer browsers install chrome && \
     npm cache clean --force && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
