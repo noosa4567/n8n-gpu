@@ -33,7 +33,8 @@ RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpe
       --enable-libx264 --enable-libfdk-aac \
       --enable-libvpx --enable-libopus --enable-libmp3lame --enable-libvorbis \
       --enable-static --disable-shared \
-      --disable-sdl2 --disable-sndio \
+      --disable-sdl2 \
+      --disable-indev=sndio --disable-outdev=sndio \
       --disable-devices --disable-opengl && \
     make -j"$(nproc)" && \
     make install && \
