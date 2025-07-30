@@ -22,7 +22,7 @@ RUN git clone --branch n11.1.5.3 https://github.com/FFmpeg/nv-codec-headers.git 
 # static FFmpeg + CUDA/NVENC (disable shared and all unneeded device libraries)
 RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpeg && \
     cd ffmpeg && \
-    . /configure \
+    ./configure \
       --prefix=/usr/local \
       --pkg-config-flags="--static" \
       --extra-cflags="-I/usr/local/cuda/include" \
@@ -33,8 +33,10 @@ RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpe
       --enable-libx264 --enable-libfdk-aac \
       --enable-libvpx --enable-libopus --enable-libmp3lame --enable-libvorbis \
       --enable-static --disable-shared \
-      --disable-devices \
-      --disable-opengl && \\
+      --disable-sdl2 --disable-sndio \
+      --disable-x11grab --disable-libxcb \
+      --disable-alsa --disable-pulseaudio --disable-v4l2 --disable-jack \
+      --disable-opengl --disable-devices && \
     make -j"$(nproc)" && \
     make install && \
     cd .. && rm -rf ffmpeg
