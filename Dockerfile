@@ -86,7 +86,9 @@ COPY --from=ffmpeg-builder /usr/local /usr/local
 # ──────────────────────────────────────────────────────────────────────────────
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
-    npm install -g --unsafe-perm n8n@1.104.1 puppeteer@24.15.0 n8n-nodes-puppeteer@1.4.1 && \
+    export HOME=/root && \   # <-- Option A: keep root’s npm cache in /root
+    npm install -g --unsafe-perm \
+      n8n@1.104.1 puppeteer@24.15.0 n8n-nodes-puppeteer@1.4.1 && \
     npm cache clean --force && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
