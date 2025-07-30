@@ -19,7 +19,7 @@ RUN git clone --branch n11.1.5.3 https://github.com/FFmpeg/nv-codec-headers.git 
     make -C nv-codec-headers -j"$(nproc)" install && \
     rm -rf nv-codec-headers
 
-# static FFmpeg + CUDA/NVENC
+# static FFmpeg + CUDA/NVENC (disable shared)
 RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpeg && \
     cd ffmpeg && \
     ./configure \
@@ -32,7 +32,8 @@ RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpe
       --enable-nonfree --enable-gpl --enable-postproc \
       --enable-libx264 --enable-libfdk-aac \
       --enable-libvpx --enable-libopus --enable-libmp3lame --enable-libvorbis \
-      --enable-static --disable-shared && \
+      --enable-static --disable-shared \
+      --disable-sdl2 && \
     make -j"$(nproc)" && \
     make install && \
     cd .. && rm -rf ffmpeg
@@ -46,12 +47,13 @@ ARG DEBIAN_FRONTEND=noninteractive
 ENV HOME=/home/node \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable \
     LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu \
     TZ=Australia/Brisbane \
     PIP_ROOT_USER_ACTION=ignore
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 1. Base OS & libraries
+# 1. Base OS & libraries + SDL2 runtime + Chrome Stable
 # ──────────────────────────────────────────────────────────────────────────────
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -66,16 +68,23 @@ RUN apt-get update && \
       libfontconfig1 libegl1-mesa libgl1-mesa-dri libpangocairo-1.0-0 \
       libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
       fonts-liberation lsb-release xdg-utils libfreetype6 libatspi2.0-0 \
-      libgcc1 libstdc++6 libnvidia-egl-gbm1 && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+      libgcc1 libstdc++6 libnvidia-egl-gbm1 \
+      libSDL2-2.0-0 && \
+    # Google Chrome Stable
+    curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | apt-key add - && \
+    echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
+      > /etc/apt/sources.list.d/google-chrome.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends google-chrome-stable && \
+    rm -rf /var/lib/apt/lists/*
 
-# Remove NVIDIA GBM stubs that crash Chromium
+# Remove NVIDIA GBM stubs that crash Chrome
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
            /usr/local/nvidia/lib*/*gbm* \
            /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 2. Create non-root user before any npm work
+# 2. Create non-root user before npm
 # ──────────────────────────────────────────────────────────────────────────────
 RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
@@ -88,7 +97,7 @@ RUN groupadd -r node && \
 COPY --from=ffmpeg-builder /usr/local /usr/local
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 4. Node.js & global packages (root)  → fix cache ownership
+# 4. Node.js & n8n + Puppeteer (root) and fix cache
 # ──────────────────────────────────────────────────────────────────────────────
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
@@ -99,14 +108,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 5. Puppeteer downloads its matching Chrome
-# ──────────────────────────────────────────────────────────────────────────────
-USER node
-RUN npx puppeteer@24.15.0 browsers install chrome
-USER root
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 6. Whisper + Torch (GPU)
+# 5. Whisper + Torch (GPU)
 # ──────────────────────────────────────────────────────────────────────────────
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir \
@@ -115,20 +117,20 @@ RUN python3.10 -m pip install --upgrade pip && \
 
 # Pre-download the tiny Whisper model
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
-    python3.10 - <<'PY'
+    python3.10 - << 'PY'
 import whisper, os
 whisper.load_model("tiny", download_root=os.environ["WHISPER_MODEL_PATH"])
 PY
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 7. FFmpeg sanity check
+# 6. FFmpeg sanity check
 # ──────────────────────────────────────────────────────────────────────────────
 RUN ffmpeg -version && \
     ffmpeg -hide_banner -hwaccels | grep -q "cuda" && \
     echo "✅  static FFmpeg with CUDA acceleration ready"
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 8. Healthcheck & launch
+# 7. Healthcheck & launch
 # ──────────────────────────────────────────────────────────────────────────────
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl --fail http://localhost:5678/healthz || exit 1
