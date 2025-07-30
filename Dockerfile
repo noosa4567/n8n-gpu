@@ -9,7 +9,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential git pkg-config yasm cmake libtool nasm curl \
-    libnuma-dev libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev \
+    libnuma-dev libx264-dev libfdk-aac-dev libmp3lame-dev \
     libopus-dev libvorbis-dev libvpx-dev libpostproc-dev && \
     rm -rf /var/lib/apt/lists/*
 
@@ -28,7 +28,7 @@ RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpe
         --extra-libs="-lpthread -lm" \
         --enable-cuda --enable-cuvid --enable-nvenc \
         --enable-nonfree --enable-gpl --enable-postproc \
-        --enable-libx264 --enable-libx265 --enable-libfdk-aac \
+        --enable-libx264 --enable-libfdk-aac \
         --enable-libvpx --enable-libopus --enable-libmp3lame --enable-libvorbis \
         --enable-static --disable-shared && \
     make -j"$(nproc)" && make install && cd .. && rm -rf ffmpeg
