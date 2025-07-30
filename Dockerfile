@@ -3,6 +3,7 @@
 ###############################################################################
 # Stage 1 – build a fully static, CUDA/NVENC‐enabled FFmpeg
 ###############################################################################
+
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS ffmpeg-builder
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -95,9 +96,11 @@ RUN rm -rf $BUILD_DIR
 ###############################################################################
 # Stage 2 – runtime: CUDA 11.8 + n8n + Whisper + Puppeteer + Chrome
 ###############################################################################
+
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
+
 ENV HOME=/home/node \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
@@ -120,13 +123,15 @@ RUN apt-get update && \
       libfontconfig1 libegl1-mesa libgl1-mesa-dri libpangocairo-1.0-0 \
       libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
       fonts-liberation lsb-release xdg-utils libfreetype6 libatspi2.0-0 \
-      libgcc1 libstdc++6 libnvidia-egl-gbm1 libSDL2-2.0-0 && \
+      libgcc1 libstdc++6 libnvidia-egl-gbm1 libSDL2-2.0-0 libsndio7.0 && \
     curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | apt-key add - && \
     echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
       > /etc/apt/sources.list.d/google-chrome.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends google-chrome-stable && \
     rm -rf /var/lib/apt/lists/*
+
+RUN ln -s /usr/lib/x86_64-linux-gnu/libsndio.so.7.0 /usr/lib/x86_64-linux-gnu/libsndio.so.6.1
 
 # Prevent NVIDIA GBM stubs from crashing Chrome
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
@@ -153,7 +158,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
 
 # Puppeteer’s Chrome (run as node)
 USER node
+
 RUN npx puppeteer@24.15.0 browsers install chrome
+
 USER root
 
 # Whisper & Torch (CUDA wheels)
@@ -176,7 +183,11 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
 
 USER node
+
 WORKDIR $HOME
+
 EXPOSE 5678
+
 ENTRYPOINT ["tini","--","n8n"]
+
 CMD []
