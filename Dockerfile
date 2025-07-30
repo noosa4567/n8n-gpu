@@ -19,7 +19,7 @@ RUN git clone --branch n11.1.5.3 https://github.com/FFmpeg/nv-codec-headers.git 
     make -C nv-codec-headers -j"$(nproc)" install && \
     rm -rf nv-codec-headers
 
-# static FFmpeg + CUDA/NVENC (disable shared & SDL2)
+# static FFmpeg + CUDA/NVENC (disable shared, SDL2 & sndio)
 RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpeg && \
     cd ffmpeg && \
     ./configure \
@@ -32,7 +32,8 @@ RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpe
       --enable-nonfree --enable-gpl --enable-postproc \
       --enable-libx264 --enable-libfdk-aac \
       --enable-libvpx --enable-libopus --enable-libmp3lame --enable-libvorbis \
-      --enable-static --disable-shared --disable-sdl2 && \
+      --enable-static --disable-shared \
+      --disable-sdl2 --disable-sndio && \
     make -j"$(nproc)" && \
     make install && \
     cd .. && rm -rf ffmpeg
