@@ -88,22 +88,25 @@ RUN groupadd -r node && \
 COPY --from=ffmpeg-builder /usr/local /usr/local
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 4. Node.js & global packages (root), then Chrome download (node)
+# 4. Node.js & global packages (root)  → fix cache ownership
 # ──────────────────────────────────────────────────────────────────────────────
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     HOME=/root npm install -g --unsafe-perm \
       n8n@1.104.1 puppeteer@24.15.0 n8n-nodes-puppeteer@1.4.1 && \
     npm cache clean --force && \
+    chown -R node:node /home/node/.npm || true && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Puppeteer downloads its matching Chrome
+# ──────────────────────────────────────────────────────────────────────────────
+# 5. Puppeteer downloads its matching Chrome
+# ──────────────────────────────────────────────────────────────────────────────
 USER node
 RUN npx puppeteer@24.15.0 browsers install chrome
 USER root
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 5. Whisper + Torch (GPU)
+# 6. Whisper + Torch (GPU)
 # ──────────────────────────────────────────────────────────────────────────────
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir \
@@ -118,14 +121,14 @@ whisper.load_model("tiny", download_root=os.environ["WHISPER_MODEL_PATH"])
 PY
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 6. FFmpeg sanity check
+# 7. FFmpeg sanity check
 # ──────────────────────────────────────────────────────────────────────────────
 RUN ffmpeg -version && \
     ffmpeg -hide_banner -hwaccels | grep -q "cuda" && \
     echo "✅  static FFmpeg with CUDA acceleration ready"
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 7. Healthcheck & launch
+# 8. Healthcheck & launch
 # ──────────────────────────────────────────────────────────────────────────────
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl --fail http://localhost:5678/healthz || exit 1
