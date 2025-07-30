@@ -19,7 +19,7 @@ RUN git clone --branch n11.1.5.3 https://github.com/FFmpeg/nv-codec-headers.git 
     make -C nv-codec-headers -j"$(nproc)" install && \
     rm -rf nv-codec-headers
 
-# static FFmpeg + CUDA/NVENC (disable shared)
+# static FFmpeg + CUDA/NVENC (disable shared & SDL2)
 RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpeg && \
     cd ffmpeg && \
     ./configure \
@@ -32,8 +32,7 @@ RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git ffmpe
       --enable-nonfree --enable-gpl --enable-postproc \
       --enable-libx264 --enable-libfdk-aac \
       --enable-libvpx --enable-libopus --enable-libmp3lame --enable-libvorbis \
-      --enable-static --disable-shared \
-      --disable-sdl2 && \
+      --enable-static --disable-shared --disable-sdl2 && \
     make -j"$(nproc)" && \
     make install && \
     cd .. && rm -rf ffmpeg
@@ -52,9 +51,7 @@ ENV HOME=/home/node \
     TZ=Australia/Brisbane \
     PIP_ROOT_USER_ACTION=ignore
 
-# ──────────────────────────────────────────────────────────────────────────────
 # 1. Base OS & libraries + SDL2 runtime + Chrome Stable
-# ──────────────────────────────────────────────────────────────────────────────
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       software-properties-common ca-certificates curl git wget gnupg tini \
@@ -68,12 +65,9 @@ RUN apt-get update && \
       libfontconfig1 libegl1-mesa libgl1-mesa-dri libpangocairo-1.0-0 \
       libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
       fonts-liberation lsb-release xdg-utils libfreetype6 libatspi2.0-0 \
-      libgcc1 libstdc++6 libnvidia-egl-gbm1 \
-      libSDL2-2.0-0 && \
-    # Google Chrome Stable
+      libgcc1 libstdc++6 libnvidia-egl-gbm1 libSDL2-2.0-0 && \
     curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | apt-key add - && \
-    echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
-      > /etc/apt/sources.list.d/google-chrome.list && \
+    echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends google-chrome-stable && \
     rm -rf /var/lib/apt/lists/*
@@ -83,22 +77,16 @@ RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
            /usr/local/nvidia/lib*/*gbm* \
            /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 2. Create non-root user before npm
-# ──────────────────────────────────────────────────────────────────────────────
+# 2. Create non-root user
 RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" "$PUPPETEER_CACHE_DIR" && \
     chown -R node:node "$HOME"
 
-# ──────────────────────────────────────────────────────────────────────────────
 # 3. Copy static FFmpeg
-# ──────────────────────────────────────────────────────────────────────────────
 COPY --from=ffmpeg-builder /usr/local /usr/local
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 4. Node.js & n8n + Puppeteer (root) and fix cache
-# ──────────────────────────────────────────────────────────────────────────────
+# 4. Node.js & n8n + Puppeteer (root), fix npm cache
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     HOME=/root npm install -g --unsafe-perm \
@@ -107,31 +95,21 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     chown -R node:node /home/node/.npm || true && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ──────────────────────────────────────────────────────────────────────────────
 # 5. Whisper + Torch (GPU)
-# ──────────────────────────────────────────────────────────────────────────────
 RUN python3.10 -m pip install --upgrade pip && \
-    python3.10 -m pip install --no-cache-dir \
-      torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
+    python3.10 -m pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
     python3.10 -m pip install --no-cache-dir git+https://github.com/openai/whisper.git
 
-# Pre-download the tiny Whisper model
+# 6. Pre-download Whisper model (no heredoc)
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
-    python3.10 - << 'PY'
-import whisper, os
-whisper.load_model("tiny", download_root=os.environ["WHISPER_MODEL_PATH"])
-PY
+    python3.10 -c "import whisper, os; whisper.load_model('tiny', download_root=os.environ['WHISPER_MODEL_PATH'])"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 6. FFmpeg sanity check
-# ──────────────────────────────────────────────────────────────────────────────
+# 7. FFmpeg sanity check
 RUN ffmpeg -version && \
     ffmpeg -hide_banner -hwaccels | grep -q "cuda" && \
     echo "✅  static FFmpeg with CUDA acceleration ready"
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 7. Healthcheck & launch
-# ──────────────────────────────────────────────────────────────────────────────
+# 8. Healthcheck & launch
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl --fail http://localhost:5678/healthz || exit 1
 
