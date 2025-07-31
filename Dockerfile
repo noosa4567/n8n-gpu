@@ -3,14 +3,18 @@
 ###############################################################################
 # Stage 1 – build a *static*, CUDA/NVENC-enabled FFmpeg (no runtime host libs)
 ###############################################################################
+
+# Use NVIDIA CUDA base image with development tools
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS ffmpeg-builder
 
+# Set noninteractive frontend, install prefix, build directory, and ensure CUDA in PATH
 ENV DEBIAN_FRONTEND=noninteractive \
     PREFIX=/usr/local \
     BUILD_DIR=/tmp/ffmpeg_sources \
     PATH=/usr/local/cuda/bin:$PATH
 
-# 1) Build-only headers & tools (no shared libs for ffmpeg deps)
+# 1) Install only build-time headers/tools to compile dependencies statically
+# - Avoid pulling in .so files that could pollute our static build
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       build-essential git pkg-config yasm cmake libtool nasm curl unzip \
@@ -21,12 +25,13 @@ RUN apt-get update && \
 
 WORKDIR "$BUILD_DIR"
 
-# 2) NVENC headers
+# 2) Install NVIDIA nv-codec-headers for NVENC/CUVID support
 RUN git clone --branch n11.1.5.3 https://github.com/FFmpeg/nv-codec-headers.git && \
     make -C nv-codec-headers -j"$(nproc)" install && \
     rm -rf nv-codec-headers
 
-# 3) Build x264, fdk-aac, lame, opus, vorbis, vpx — all static
+# 3) Build external codec libraries as static archives (.a)
+# Ensures ffmpeg links only to *.a files, eliminating runtime .so deps
 RUN git clone https://code.videolan.org/videolan/x264.git && \
     cd x264 && \
     ./configure --prefix="$PREFIX" --enable-static --disable-shared --disable-opencl && \
@@ -64,7 +69,9 @@ RUN git clone https://chromium.googlesource.com/webm/libvpx.git && \
     make -j"$(nproc)" && make install && \
     cd .. && rm -rf libvpx
 
-# 4) Build FFmpeg itself, fully static, with CUDA/NVENC
+# 4) Configure and build FFmpeg with static flags and NVENC enabled
+# - Disable all SDL2/sndio/X11/Xv so no host libs are pulled in
+# - The final binary is truly static; NVENC is loaded via dlopen() at runtime
 RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git && \
     cd FFmpeg && \
     PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig" ./configure \
@@ -82,20 +89,21 @@ RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git && \
       --disable-libxcb \
       --disable-indev=x11grab \
       --disable-outdev=xv \
-      --disable-devices --disable-opengl && \
+      --disable-opengl && \
     make -j"$(nproc)" && make install && \
     cd .. && rm -rf FFmpeg
 
-# 5) Cleanup
+# 5) Clean up build directory to reduce image size
 RUN rm -rf "$BUILD_DIR"
-
 
 ###############################################################################
 # Stage 2 – runtime: CUDA 11.8 + n8n + Whisper + Puppeteer + Chrome
 ###############################################################################
+
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
+
 ENV HOME=/home/node \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
@@ -104,7 +112,9 @@ ENV HOME=/home/node \
     TZ=Australia/Brisbane \
     PIP_ROOT_USER_ACTION=ignore
 
-# 1) Base OS & libraries + SDL2 runtime + Chrome Stable (and lsb-release, xdg-utils for Chrome)
+# 1) Install base OS libraries, SDL2 runtime, Chrome dependencies
+# - lsb-release + xdg-utils are required by Chrome's installer script
+# - GTK and VA-API libs needed even in headless mode
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       software-properties-common ca-certificates curl git wget gnupg tini \
@@ -121,91 +131,93 @@ RUN apt-get update && \
       libgcc1 libstdc++6 libnvidia-egl-gbm1 libSDL2-2.0-0 libsndio7.0 libxv1 && \
     curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | apt-key add - && \
     echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends google-chrome-stable && \
+    apt-get update && apt-get install -y --no-install-recommends google-chrome-stable && \
     rm -rf /var/lib/apt/lists/*
 
-# 2) Symlink legacy sonames for NVIDIA driver blobs (sndio & VA-API)
-RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0   /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2        /usr/lib/x86_64-linux-gnu/libva.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2    /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2    /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
+# 2) Create symlinks for legacy sonames expected by NVENC driver blobs
+RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0 /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2 /usr/lib/x86_64-linux-gnu/libva.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2 /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2 /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
 
-# 3) Remove NVIDIA GBM stubs that crash Chrome
+# 3) Remove NVIDIA GBM stubs that crash headless
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
            /usr/local/nvidia/lib*/*gbm* \
            /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
 
-# 4) Create non-root user, prepare n8n cache & puppeteer cache
+# 4) Create non-root user and setup cache directories for n8n & Puppeteer
 RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" "$PUPPETEER_CACHE_DIR" && \
     chown -R node:node "$HOME"
 
-# 5) Copy our *static* FFmpeg build in front of NVIDIA’s wrapper dir
-COPY --from=ffmpeg-builder /usr/local /usr/local
+# 5) Copy static FFmpeg in front of NVIDIA wrapper directory
+COPY --from=ffmpeg-builder /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
+COPY --from=ffmpeg-builder /usr/local/bin/ffprobe /usr/local/bin/ffprobe
+
 RUN mkdir -p /usr/local/nvidia/bin && \
-    ln -sf /usr/local/bin/ffmpeg  /usr/local/nvidia/bin/ffmpeg && \
+    ln -sf /usr/local/bin/ffmpeg /usr/local/nvidia/bin/ffmpeg && \
     ln -sf /usr/local/bin/ffprobe /usr/local/nvidia/bin/ffprobe
 
-# 6) Install Node.js 20 + n8n + Puppeteer (root, then fix perms)
+# 6) Install Node.js 20, n8n & Puppeteer globally as root, then fix npm cache perms
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get update && apt-get install -y --no-install-recommends nodejs && \
     npm install -g --unsafe-perm n8n@1.104.1 puppeteer@24.15.0 n8n-nodes-puppeteer@1.4.1 && \
-    npm cache clean --force && \
-    chown -R node:node /home/node/.npm && \
+    npm cache clean --force && chown -R node:node /home/node/.npm && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# 7) As node user, fetch Puppeteer’s managed Chrome
+# 7) Switch to node user and install Puppeteer’s managed Chrome
 USER node
+
 RUN npx puppeteer@24.15.0 browsers install chrome
+
 USER root
 
-# 8) Whisper & Torch (CUDA wheels) + satisfy new whisper deps
+# 8) Install Whisper + Torch (CUDA wheels) and satisfy new deps
+# - numba & tiktoken added in recent Whisper releases
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir \
       torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
     python3.10 -m pip install --no-cache-dir numba tiktoken && \
     python3.10 -m pip install --no-cache-dir git+https://github.com/openai/whisper.git
 
-# 9) Pre-download Whisper “tiny” model
+# 9) Pre-download Whisper "tiny" model for faster startup
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
     python3.10 -c "import whisper, os; whisper.load_model('tiny', download_root=os.environ['WHISPER_MODEL_PATH'])"
 
-# 10) FFmpeg sanity check
+# 10) Quick sanity check: FFmpeg should be static and list CUDA hwaccels
 RUN which -a ffmpeg && \
     ldd /usr/local/bin/ffmpeg | grep -E 'not a dynamic executable|sndio|libva' || true && \
     ffmpeg -hide_banner -hwaccels | grep cuda
 
-# 11) Healthcheck & launch
+# 11) Healthcheck and final entrypoint
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
 
 USER node
+
 WORKDIR $HOME
+
 EXPOSE 5678
 
 ENTRYPOINT ["tini","--","n8n"]
+
 CMD []
 
 ###############################################################################
 # Notes for future maintainers
-#
-# • Puppeteer / Chrome
-#   – Needs lsb-release + xdg-utils, GTK/VA-API libs even in headless mode.
-#   – NVIDIA’s GBM stubs in /usr/local/nvidia/lib*/gbm crash Chrome; we delete them.
-#
-# • FFmpeg
-#   – Built -static; zero DT_NEEDED, but NVENC is dlopened at runtime.
-#   – Legacy sonames (libsndio.so.6.1, libva.so.1…) satisfied via harmless symlinks.
-#   – Overwrite /usr/local/nvidia/bin wrappers so our ffmpeg always wins.
-#
-# • Whisper
-#   – New install_requires include numba + tiktoken, so install them first.
-#   – torch + torchaudio + torchvision from CUDA 11.8 wheels.
-#
-# • n8n
-#   – Ensure /home/node/.n8n and /home/node/.cache Puppeteer dirs are chown’d.
-#   – Entrypoint runs as node user so perms must be correct up front.
+# • Puppeteer / Chrome:
+# – Requires lsb-release, xdg-utils, GTK/VA-API libs even headless
+# – NVIDIA GBM stubs crash Chrome; removed above
+# • FFmpeg:
+# – Built static; NVENC dlopens driver blobs expecting legacy sonames
+# – Symlinks for libsndio.so.6.1, libva.so.1 satisfy driver deps
+# – Overwrites /usr/local/nvidia/bin wrappers so our binary wins
+# • Whisper:
+# – Recent releases added numba & tiktoken to install_requires
+# – Install them before building from git
+# • n8n:
+# – Non-root user must own .n8n & .cache directories
+# – Entrypoint runs n8n as node; ensure perms are correct
 ###############################################################################
