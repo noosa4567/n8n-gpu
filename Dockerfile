@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1
+
 ###############################################################################
 # Stage 1 – build a *static*, CUDA/NVENC-enabled FFmpeg (no runtime host libs)
 ###############################################################################
@@ -103,26 +104,28 @@ ENV HOME=/home/node \
     TZ=Australia/Brisbane \
     PIP_ROOT_USER_ACTION=ignore
 
-# 1) Chrome/Puppeteer deps + compat libraries
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# 1) Base OS & libraries + SDL2 runtime + Chrome Stable (and lsb-release, xdg-utils for Chrome)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
       software-properties-common ca-certificates curl git wget gnupg tini \
       python3.10 python3.10-venv python3.10-dev python3-pip \
-      libglib2.0-0 libnss3 libxss1 libasound2 libatk1.0-0 libatk-bridge2.0-0 \
-      libgtk-3-0 libdrm2 libxkbcommon0 libgbm1 libxcomposite1 libxrandr2 \
-      libxdamage1 libx11-xcb1 libva2 libva-x11-2 libva-drm2 libva-wayland2 \
-      libvdpau1 libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-render0 \
-      libxrender1 libxtst6 libxi6 libxcursor1 libcairo2 libcups2 libdbus-1-3 \
-      libexpat1 libfontconfig1 libegl1-mesa libgl1-mesa-dri libpangocairo-1.0-0 \
+      libglib2.0-0 libnss3 libxss1 libasound2 libatk1.0-0 \
+      libatk-bridge2.0-0 libgtk-3-0 libdrm2 libxkbcommon0 libgbm1 \
+      libxcomposite1 libxrandr2 libxdamage1 libx11-xcb1 libva2 \
+      libva-x11-2 libva-drm2 libva-wayland2 libvdpau1 libxcb-shape0 \
+      libxcb-shm0 libxcb-xfixes0 libxcb-render0 libxrender1 libxtst6 \
+      libxi6 libxcursor1 libcairo2 libcups2 libdbus-1-3 libexpat1 \
+      libfontconfig1 libegl1-mesa libgl1-mesa-dri libpangocairo-1.0-0 \
       libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
-      libfreetype6 libatspi2.0-0 libSDL2-2.0-0 libsndio7.0 libxv1 \
-      libgcc1 libstdc++6 libnvidia-egl-gbm1 fonts-liberation && \
+      fonts-liberation lsb-release xdg-utils libfreetype6 libatspi2.0-0 \
+      libgcc1 libstdc++6 libnvidia-egl-gbm1 libSDL2-2.0-0 libsndio7.0 libxv1 && \
     curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | apt-key add - && \
-    echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
-       > /etc/apt/sources.list.d/google-chrome.list && \
-    apt-get update && apt-get install -y --no-install-recommends google-chrome-stable && \
+    echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends google-chrome-stable && \
     rm -rf /var/lib/apt/lists/*
 
-# 2) Symlink legacy sonames for NVIDIA driver blobs
+# 2) Symlink legacy sonames for NVIDIA driver blobs (sndio & VA-API)
 RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0   /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2        /usr/lib/x86_64-linux-gnu/libva.so.1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2    /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
@@ -134,51 +137,50 @@ RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
            /usr/local/nvidia/lib*/*gbm* \
            /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
 
-# 4) Copy our *static* FFmpeg build
-COPY --from=ffmpeg-builder /usr/local /usr/local
+# 4) Create non-root user, prepare n8n cache & puppeteer cache
+RUN groupadd -r node && \
+    useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
+    mkdir -p "$HOME/.n8n" "$PUPPETEER_CACHE_DIR" && \
+    chown -R node:node "$HOME"
 
-# 5) Overwrite NVIDIA wrappers so /usr/local/bin wins
+# 5) Copy our *static* FFmpeg build in front of NVIDIA’s wrapper dir
+COPY --from=ffmpeg-builder /usr/local /usr/local
 RUN mkdir -p /usr/local/nvidia/bin && \
     ln -sf /usr/local/bin/ffmpeg  /usr/local/nvidia/bin/ffmpeg && \
     ln -sf /usr/local/bin/ffprobe /usr/local/nvidia/bin/ffprobe
 
-# 6) Install Node.js 20 + n8n + Puppeteer globally (as root)
+# 6) Install Node.js 20 + n8n + Puppeteer (root, then fix perms)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends nodejs && \
+    apt-get update && apt-get install -y --no-install-recommends nodejs && \
     npm install -g --unsafe-perm n8n@1.104.1 puppeteer@24.15.0 n8n-nodes-puppeteer@1.4.1 && \
     npm cache clean --force && \
+    chown -R node:node /home/node/.npm && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# 7) Create node user & fix npm / Puppeteer cache ownership
-RUN groupadd -r node && useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
-    mkdir -p "$HOME/.npm" "$PUPPETEER_CACHE_DIR" && \
-    chown -R node:node "$HOME/.npm" "$PUPPETEER_CACHE_DIR"
-
-# 8) Switch to node and download headless Chrome
+# 7) As node user, fetch Puppeteer’s managed Chrome
 USER node
 RUN npx puppeteer@24.15.0 browsers install chrome
 USER root
 
-# 9) Whisper & Torch (CUDA wheels) + pre-download tiny model
-RUN python3.10 -m pip install --no-cache-dir --upgrade pip && \
-    python3.10 -m pip install --no-cache-dir numba tiktoken && \
+# 8) Whisper & Torch (CUDA wheels) + satisfy new whisper deps
+RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir \
-      torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 \
-      git+https://github.com/openai/whisper.git && \
-    mkdir -p "$WHISPER_MODEL_PATH" && \
-    python3.10 - <<'PY'
-import whisper, os
-whisper.load_model("tiny", download_root=os.environ["WHISPER_MODEL_PATH"])
-PY
+      torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
+    python3.10 -m pip install --no-cache-dir numba tiktoken && \
+    python3.10 -m pip install --no-cache-dir git+https://github.com/openai/whisper.git
 
-# 10) Final sanity check & healthcheck
+# 9) Pre-download Whisper “tiny” model
+RUN mkdir -p "$WHISPER_MODEL_PATH" && \
+    python3.10 -c "import whisper, os; whisper.load_model('tiny', download_root=os.environ['WHISPER_MODEL_PATH'])"
+
+# 10) FFmpeg sanity check
 RUN which -a ffmpeg && \
     ldd /usr/local/bin/ffmpeg | grep -E 'not a dynamic executable|sndio|libva' || true && \
     ffmpeg -hide_banner -hwaccels | grep cuda
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
-  CMD curl -fs http://localhost:5678/healthz || exit 1
+# 11) Healthcheck & launch
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl --fail http://localhost:5678/healthz || exit 1
 
 USER node
 WORKDIR $HOME
@@ -186,3 +188,24 @@ EXPOSE 5678
 
 ENTRYPOINT ["tini","--","n8n"]
 CMD []
+
+###############################################################################
+# Notes for future maintainers
+#
+# • Puppeteer / Chrome
+#   – Needs lsb-release + xdg-utils, GTK/VA-API libs even in headless mode.
+#   – NVIDIA’s GBM stubs in /usr/local/nvidia/lib*/gbm crash Chrome; we delete them.
+#
+# • FFmpeg
+#   – Built -static; zero DT_NEEDED, but NVENC is dlopened at runtime.
+#   – Legacy sonames (libsndio.so.6.1, libva.so.1…) satisfied via harmless symlinks.
+#   – Overwrite /usr/local/nvidia/bin wrappers so our ffmpeg always wins.
+#
+# • Whisper
+#   – New install_requires include numba + tiktoken, so install them first.
+#   – torch + torchaudio + torchvision from CUDA 11.8 wheels.
+#
+# • n8n
+#   – Ensure /home/node/.n8n and /home/node/.cache Puppeteer dirs are chown’d.
+#   – Entrypoint runs as node user so perms must be correct up front.
+###############################################################################
