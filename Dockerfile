@@ -144,14 +144,15 @@ RUN mkdir -p /usr/local/nvidia/bin && \
 
 # 6) Install Node.js 20 + n8n + Puppeteer globally (as root)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get update && apt-get install -y --no-install-recommends nodejs && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends nodejs && \
     npm install -g --unsafe-perm n8n@1.104.1 puppeteer@24.15.0 n8n-nodes-puppeteer@1.4.1 && \
     npm cache clean --force && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# 7) Create node user & clean/chown Puppeteer cache before npx
+# 7) Create node user & fix npm / Puppeteer cache ownership
 RUN groupadd -r node && useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
-    rm -rf "$HOME/.npm" && mkdir -p "$HOME/.npm" "$PUPPETEER_CACHE_DIR" && \
+    mkdir -p "$HOME/.npm" "$PUPPETEER_CACHE_DIR" && \
     chown -R node:node "$HOME/.npm" "$PUPPETEER_CACHE_DIR"
 
 # 8) Switch to node and download headless Chrome
@@ -161,7 +162,7 @@ USER root
 
 # 9) Whisper & Torch (CUDA wheels) + pre-download tiny model
 RUN python3.10 -m pip install --no-cache-dir --upgrade pip && \
-    python3.10 -m pip install --no-cache-dir numba && \
+    python3.10 -m pip install --no-cache-dir numba tiktoken && \
     python3.10 -m pip install --no-cache-dir \
       torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 \
       git+https://github.com/openai/whisper.git && \
