@@ -102,17 +102,19 @@ FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Ensure our static /usr/local/bin ffmpeg stays first even after NVIDIA hook
+# Ensure:
+#  - our static /usr/local/bin ffmpeg still wins,
+#  - **and** the host’s NVIDIA driver libs (in /usr/local/nvidia) remain on LD_LIBRARY_PATH
 ENV HOME=/home/node \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable \
-    LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu \
+    LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64:/usr/local/nvidia/lib:$LD_LIBRARY_PATH \
     TZ=Australia/Brisbane \
     PIP_ROOT_USER_ACTION=ignore \
     PATH=/usr/local/bin:$PATH
 
-# 1) Install base OS libs, Chrome deps (lsb-release & xdg-utils needed by Chrome)
+# 1) Install base OS libs & Chrome deps (lsb-release + xdg-utils needed by Chrome)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       software-properties-common ca-certificates curl git wget gnupg tini \
@@ -146,12 +148,12 @@ RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0   \
     ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 \
           /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
 
-# 3) Remove NVIDIA GBM stubs (they crash headless Chrome)
+# 3) Remove NVIDIA GBM stubs (they crash Chrome headless)
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
            /usr/local/nvidia/lib*/*gbm* \
            /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
 
-# 4) Create non-root 'node' user and prepare cache dirs for n8n & Puppeteer
+# 4) Create non-root 'node' user and prepare cache dirs
 RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" "$PUPPETEER_CACHE_DIR" && \
@@ -174,32 +176,28 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     chown -R node:node /home/node/.npm && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# 7) As node, install Puppeteer’s managed Chrome
+# 7) As 'node', install Puppeteer’s managed Chrome
 USER node
 RUN npx puppeteer@24.15.0 browsers install chrome
 USER root
 
-# 8) Install Whisper + Torch (CUDA wheels) & satisfy new whisper deps
+# 8) Install Whisper + Torch (CUDA wheels) & satisfy new deps
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir \
       torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
     python3.10 -m pip install --no-cache-dir numba tiktoken && \
-    python3.10 -m pip install --no-cache-dir \
-      git+https://github.com/openai/whisper.git
+    python3.10 -m pip install --no-cache-dir git+https://github.com/openai/whisper.git
 
 # 9) Pre-download Whisper “tiny” model for faster cold start
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
-    python3.10 - <<'PY'
-import whisper, os
-whisper.load_model("tiny", download_root=os.environ["WHISPER_MODEL_PATH"])
-PY
+    python3.10 - <<<'import whisper, os; whisper.load_model("tiny", download_root=os.environ["WHISPER_MODEL_PATH"])'
 
 # 10) Sanity-check FFmpeg: must be static and list CUDA hwaccels
 RUN which -a ffmpeg && \
     ldd /usr/local/bin/ffmpeg | grep -E 'not a dynamic executable|sndio|libva' || true && \
     ffmpeg -hide_banner -hwaccels | grep cuda
 
-# 11) Tiny shim: run *after* NVIDIA hook to force /usr/local/bin first
+# 11) Tiny shim – executed after NVIDIA hook to force /usr/local/bin first
 RUN printf '%s\n' \
     '#!/bin/sh' \
     'export PATH=/usr/local/bin:$PATH' \
