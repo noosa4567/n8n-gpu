@@ -3,7 +3,6 @@
 ###############################################################################
 # Stage 1 – build a fully static, CUDA/NVENC‐enabled FFmpeg
 ###############################################################################
-
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS ffmpeg-builder
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -71,7 +70,7 @@ RUN git clone https://chromium.googlesource.com/webm/libvpx.git && \
     make -j"$(nproc)" && make install && \
     cd .. && rm -rf libvpx
 
-# FFmpeg itself
+# FFmpeg itself (now explicitly disabling all X11/Xv support)
 RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git && \
     cd FFmpeg && \
     PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig" ./configure \
@@ -86,17 +85,19 @@ RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git && \
       --enable-libvpx --enable-libopus --enable-libmp3lame --enable-libvorbis \
       --enable-static --disable-shared \
       --disable-sdl2 --disable-sndio \
+      --disable-libxcb \
+      --disable-indev=x11grab \
+      --disable-outdev=xv \
       --disable-devices --disable-opengl && \
     make -j"$(nproc)" && make install && \
     cd .. && rm -rf FFmpeg
 
-# Remove all remaining sources to slim the image
+# Clean up source directory
 RUN rm -rf $BUILD_DIR
 
 ###############################################################################
 # Stage 2 – runtime: CUDA 11.8 + n8n + Whisper + Puppeteer + Chrome
 ###############################################################################
-
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -131,8 +132,6 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends google-chrome-stable && \
     rm -rf /var/lib/apt/lists/*
 
-RUN ln -s /usr/lib/x86_64-linux-gnu/libsndio.so.7.0 /usr/lib/x86_64-linux-gnu/libsndio.so.6.1
-
 # Prevent NVIDIA GBM stubs from crashing Chrome
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
            /usr/local/nvidia/lib*/*gbm* \
@@ -144,7 +143,7 @@ RUN groupadd -r node && \
     mkdir -p "$HOME/.n8n" "$PUPPETEER_CACHE_DIR" && \
     chown -R node:node "$HOME"
 
-# Copy our truly static FFmpeg
+# Copy our static FFmpeg
 COPY --from=ffmpeg-builder /usr/local /usr/local
 
 # Node.js, n8n & Puppeteer (fix cache perms)
@@ -158,9 +157,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
 
 # Puppeteer’s Chrome (run as node)
 USER node
-
 RUN npx puppeteer@24.15.0 browsers install chrome
-
 USER root
 
 # Whisper & Torch (CUDA wheels)
@@ -183,11 +180,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
 
 USER node
-
 WORKDIR $HOME
-
 EXPOSE 5678
-
 ENTRYPOINT ["tini","--","n8n"]
-
 CMD []
