@@ -9,7 +9,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     BUILD_DIR=/tmp/ffmpeg_sources \
     PATH=/usr/local/cuda/bin:$PATH
 
-# 1) Build‐only headers & tools (no shared libs for ffmpeg deps)
+# 1) Build-only headers & tools (no shared libs for ffmpeg deps)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       build-essential git pkg-config yasm cmake libtool nasm curl unzip \
@@ -88,6 +88,7 @@ RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git && \
 # 5) Cleanup
 RUN rm -rf "$BUILD_DIR"
 
+
 ###############################################################################
 # Stage 2 – runtime: CUDA 11.8 + n8n + Whisper + Puppeteer + Chrome
 ###############################################################################
@@ -112,21 +113,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libvdpau1 libxcb-shape0 libxcb-shm0 libxcb-xfixes0 libxcb-render0 \
       libxrender1 libxtst6 libxi6 libxcursor1 libcairo2 libcups2 libdbus-1-3 \
       libexpat1 libfontconfig1 libegl1-mesa libgl1-mesa-dri libpangocairo-1.0-0 \
-      libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 libfreetype6 \
-      libatspi2.0-0 libSDL2-2.0-0 libsndio7.0 libxv1 libgcc1 libstdc++6 \
-      libnvidia-egl-gbm1 fonts-liberation \
- && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
- && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
-       > /etc/apt/sources.list.d/google-chrome.list \
- && apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
- && rm -rf /var/lib/apt/lists/*
+      libpango-1.0-0 libharfbuzz0b libfribidi0 libthai0 libdatrie1 \
+      libfreetype6 libatspi2.0-0 libSDL2-2.0-0 libsndio7.0 libxv1 \
+      libgcc1 libstdc++6 libnvidia-egl-gbm1 fonts-liberation && \
+    curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | apt-key add - && \
+    echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
+       > /etc/apt/sources.list.d/google-chrome.list && \
+    apt-get update && apt-get install -y --no-install-recommends google-chrome-stable && \
+    rm -rf /var/lib/apt/lists/*
 
 # 2) Symlink legacy sonames for NVIDIA driver blobs
-RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0   /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 \
- && ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2        /usr/lib/x86_64-linux-gnu/libva.so.1 \
- && ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2    /usr/lib/x86_64-linux-gnu/libva-drm.so.1 \
- && ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2    /usr/lib/x86_64-linux-gnu/libva-x11.so.1 \
- && ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
+RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0   /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2        /usr/lib/x86_64-linux-gnu/libva.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2    /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2    /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
 
 # 3) Remove NVIDIA GBM stubs that crash Chrome
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
@@ -137,23 +138,22 @@ RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
 COPY --from=ffmpeg-builder /usr/local /usr/local
 
 # 5) Overwrite NVIDIA wrappers so /usr/local/bin wins
-RUN mkdir -p /usr/local/nvidia/bin \
- && ln -sf /usr/local/bin/ffmpeg  /usr/local/nvidia/bin/ffmpeg \
- && ln -sf /usr/local/bin/ffprobe /usr/local/nvidia/bin/ffprobe
+RUN mkdir -p /usr/local/nvidia/bin && \
+    ln -sf /usr/local/bin/ffmpeg  /usr/local/nvidia/bin/ffmpeg && \
+    ln -sf /usr/local/bin/ffprobe /usr/local/nvidia/bin/ffprobe
 
 # 6) Install Node.js 20 + n8n + Puppeteer globally (as root)
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
- && apt-get update && apt-get install -y --no-install-recommends nodejs \
- && npm install -g --unsafe-perm \
-      n8n@1.104.1 puppeteer@24.15.0 n8n-nodes-puppeteer@1.4.1 \
- && npm cache clean --force \
- && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends nodejs && \
+    npm install -g --unsafe-perm n8n@1.104.1 puppeteer@24.15.0 n8n-nodes-puppeteer@1.4.1 && \
+    npm cache clean --force && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # 7) Create node user & fix npm / Puppeteer cache ownership
-RUN groupadd -r node && useradd -r -g node -G video -u 999 \
-            -m -d "$HOME" -s /bin/bash node \
- && mkdir -p "$HOME/.npm" "$PUPPETEER_CACHE_DIR" \
- && chown -R node:node "$HOME/.npm" "$PUPPETEER_CACHE_DIR"
+RUN groupadd -r node && useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
+    mkdir -p "$HOME/.npm" "$PUPPETEER_CACHE_DIR" && \
+    chown -R node:node "$HOME/.npm" "$PUPPETEER_CACHE_DIR"
 
 # 8) Switch to node and download headless Chrome
 USER node
@@ -161,21 +161,20 @@ RUN npx puppeteer@24.15.0 browsers install chrome
 USER root
 
 # 9) Whisper & Torch (CUDA wheels) + pre-download tiny model
-RUN python3.10 -m pip install --no-cache-dir --upgrade pip \
- && python3.10 -m pip install --no-install-recommends \
+RUN python3.10 -m pip install --no-cache-dir --upgrade pip && \
+    python3.10 -m pip install --no-cache-dir \
       torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 \
-      git+https://github.com/openai/whisper.git
-
-RUN mkdir -p "$WHISPER_MODEL_PATH" \
- && python3.10 - <<'PY' 
+      git+https://github.com/openai/whisper.git && \
+    mkdir -p "$WHISPER_MODEL_PATH" && \
+    python3.10 - <<'PY'
 import whisper, os
 whisper.load_model("tiny", download_root=os.environ["WHISPER_MODEL_PATH"])
 PY
 
 # 10) Final sanity check & healthcheck
-RUN which -a ffmpeg \
- && ldd /usr/local/bin/ffmpeg | grep -E 'not a dynamic executable|sndio|libva' || true \
- && ffmpeg -hide_banner -hwaccels | grep cuda
+RUN which -a ffmpeg && \
+    ldd /usr/local/bin/ffmpeg | grep -E 'not a dynamic executable|sndio|libva' || true && \
+    ffmpeg -hide_banner -hwaccels | grep cuda
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
   CMD curl -fs http://localhost:5678/healthz || exit 1
