@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 ###############################################################################
-# Stage 1 – build a fully static, CUDA/NVENC‐enabled FFmpeg
+# Stage 1 – build a fully static, CUDA/NVENC-enabled FFmpeg
 ###############################################################################
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS ffmpeg-builder
 
@@ -70,7 +70,7 @@ RUN git clone https://chromium.googlesource.com/webm/libvpx.git && \
     make -j"$(nproc)" && make install && \
     cd .. && rm -rf libvpx
 
-# FFmpeg itself (now explicitly disabling all X11/Xv support)
+# FFmpeg itself (disabling all X11/Xv support)
 RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git && \
     cd FFmpeg && \
     PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig" ./configure \
@@ -95,6 +95,7 @@ RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git && \
 # Clean up source directory
 RUN rm -rf $BUILD_DIR
 
+
 ###############################################################################
 # Stage 2 – runtime: CUDA 11.8 + n8n + Whisper + Puppeteer + Chrome
 ###############################################################################
@@ -110,7 +111,10 @@ ENV HOME=/home/node \
     TZ=Australia/Brisbane \
     PIP_ROOT_USER_ACTION=ignore
 
-# Base OS libs + Chrome & SDL2 runtime
+# 1) Remove NVIDIA-bundled ffmpeg/ffprobe so our /usr/local/bin ones are used
+RUN rm -f /usr/local/nvidia/bin/ffmpeg /usr/local/nvidia/bin/ffprobe || true
+
+# 2) Base OS libs + Chrome & SDL2 runtime
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       software-properties-common ca-certificates curl git wget gnupg tini \
@@ -127,26 +131,26 @@ RUN apt-get update && \
       libgcc1 libstdc++6 libnvidia-egl-gbm1 libSDL2-2.0-0 libsndio7.0 libxv1 && \
     curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | apt-key add - && \
     echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
-      > /etc/apt/sources.list.d/google-chrome.list && \
+         > /etc/apt/sources.list.d/google-chrome.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends google-chrome-stable && \
     rm -rf /var/lib/apt/lists/*
 
-# Prevent NVIDIA GBM stubs from crashing Chrome
+# 3) Prevent NVIDIA GBM stubs from crashing Chrome
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
            /usr/local/nvidia/lib*/*gbm* \
            /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
 
-# Non-root node user
+# 4) Non-root node user
 RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" "$PUPPETEER_CACHE_DIR" && \
     chown -R node:node "$HOME"
 
-# Copy our static FFmpeg
+# 5) Copy our static FFmpeg
 COPY --from=ffmpeg-builder /usr/local /usr/local
 
-# Node.js, n8n & Puppeteer (fix cache perms)
+# 6) Node.js, n8n & Puppeteer (fix cache perms)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get install -y nodejs && \
     HOME=/root npm install -g --unsafe-perm \
@@ -155,27 +159,27 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     chown -R node:node /home/node/.npm || true && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Puppeteer’s Chrome (run as node)
+# 7) Puppeteer’s Chrome (run as node)
 USER node
 RUN npx puppeteer@24.15.0 browsers install chrome
 USER root
 
-# Whisper & Torch (CUDA wheels)
+# 8) Whisper & Torch (CUDA wheels)
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir \
-      torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
+       torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
     python3.10 -m pip install --no-cache-dir git+https://github.com/openai/whisper.git
 
-# Pre-download tiny model
+# 9) Pre-download tiny model
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
     python3.10 -c "import whisper,os; whisper.load_model('tiny', download_root=os.environ['WHISPER_MODEL_PATH'])"
 
-# FFmpeg sanity check
+# 10) FFmpeg sanity check
 RUN ffmpeg -version && \
     ffmpeg -hide_banner -hwaccels | grep -q "cuda" && \
     echo "✅ static FFmpeg with CUDA acceleration ready"
 
-# Healthcheck & launch
+# 11) Healthcheck & launch
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
 
