@@ -176,7 +176,7 @@ USER root
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir \
       torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
-    python3.10 -m pip install --no-install-recommends numba tiktoken git+https://github.com/openai/whisper.git
+    python3.10 -m pip install --no-cache-dir numba tiktoken git+https://github.com/openai/whisper.git
 
 # 9) Pre-download Whisper “medium” model into image
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
