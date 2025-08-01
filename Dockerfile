@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 ###############################################################################
-# Stage 1 ─ build a *fully-static* FFmpeg with CUDA/NVENC support
+# Stage-1 ─ build a *fully-static* FFmpeg (CUDA/NVENC enabled)
 ###############################################################################
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS ffmpeg-builder
 
@@ -9,21 +9,20 @@ ENV DEBIAN_FRONTEND=noninteractive \
     BUILD_DIR=/tmp/ffmpeg_sources \
     PATH=/usr/local/cuda/bin:$PATH
 
-# ── 1) tool-chain only — runtime stage stays clean ───────────────────────────
+# 1) tool-chain (discarded later)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         build-essential git pkg-config yasm cmake libtool nasm curl unzip \
         autoconf automake libnuma-dev zlib1g-dev libfreetype6-dev \
         libfontconfig-dev libharfbuzz-dev libogg-dev && \
     rm -rf /var/lib/apt/lists/* && mkdir -p "$BUILD_DIR"
-
 WORKDIR "$BUILD_DIR"
 
-# ── 2) NVENC headers ─────────────────────────────────────────────────────────
+# 2) NVENC headers
 RUN git clone --branch n13.0.19.0 https://github.com/FFmpeg/nv-codec-headers.git && \
     make -C nv-codec-headers -j"$(nproc)" install && rm -rf nv-codec-headers
 
-# ── 3) external codec libraries – built *static* (.a) ────────────────────────
+# 3) external codecs -- static only
 RUN git clone --branch stable https://code.videolan.org/videolan/x264.git && \
     cd x264 && ./configure --prefix="$PREFIX" --enable-static --disable-shared --disable-opencl && \
     make -j"$(nproc)" && make install && cd .. && rm -rf x264
@@ -49,12 +48,11 @@ RUN curl -fsSL https://downloads.xiph.org/releases/vorbis/libvorbis-1.3.7.tar.gz
     make -j"$(nproc)" && make install && cd .. && rm -rf libvorbis-1.3.7 vorbis.tar.gz
 
 RUN git clone https://chromium.googlesource.com/webm/libvpx.git && \
-    cd libvpx && \
-    ./configure --prefix="$PREFIX" --enable-static --disable-shared \
+    cd libvpx && ./configure --prefix="$PREFIX" --enable-static --disable-shared \
         --disable-examples --disable-unit-tests --enable-vp9-highbitdepth && \
     make -j"$(nproc)" && make install && cd .. && rm -rf libvpx
 
-# ── 4) FFmpeg (static + NVENC) ───────────────────────────────────────────────
+# 4) FFmpeg (static, NVENC)
 RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git && \
     cd FFmpeg && \
     PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig" ./configure \
@@ -75,7 +73,7 @@ RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git && \
 RUN rm -rf "$BUILD_DIR"
 
 ###############################################################################
-# Stage 2 – runtime: CUDA 11.8, n8n, Chrome, Torch, Whisper (medium-int8)
+# Stage-2 ─ runtime: CUDA 11.8 • n8n • Chrome w/ sandbox • Whisper FP-16 medium
 ###############################################################################
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
@@ -91,7 +89,7 @@ ENV HOME=/home/node \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
 
-# ── 1) base libs + Chrome ────────────────────────────────────────────────────
+# 1) base libs + Chrome
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         software-properties-common ca-certificates curl git wget gnupg tini \
@@ -111,43 +109,48 @@ RUN apt-get update && \
     apt-get update && apt-get install -y --no-install-recommends google-chrome-stable && \
     rm -rf /var/lib/apt/lists/*
 
-# ── 2) soname symlinks expected by NVENC ─────────────────────────────────────
+# 2) NVENC legacy sonames
 RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0   /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2        /usr/lib/x86_64-linux-gnu/libva.so.1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2    /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2    /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
 
-# ── 3) remove NVIDIA GBM stubs that crash headless Chrome ────────────────────
+# 3) strip NVIDIA GBM stubs (Chrome <115 crash)
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
            /usr/local/nvidia/lib*/*gbm* \
            /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
 
-# ── 4) non-root user + cache dirs ────────────────────────────────────────────
-RUN groupadd -r node && \
-    useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
+# 4) non-root user
+RUN groupadd -r node && useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" "$PUPPETEER_CACHE_DIR" && chown -R node:node "$HOME"
 
-# ── 5) static FFmpeg from Stage 1 ────────────────────────────────────────────
+# 5) static FFmpeg
 COPY --from=ffmpeg-builder /usr/local/bin/ffmpeg  /usr/local/bin/ffmpeg
 COPY --from=ffmpeg-builder /usr/local/bin/ffprobe /usr/local/bin/ffprobe
 RUN mkdir -p /usr/local/nvidia/bin && \
     ln -sf /usr/local/bin/ffmpeg  /usr/local/nvidia/bin/ffmpeg && \
     ln -sf /usr/local/bin/ffprobe /usr/local/nvidia/bin/ffprobe
 
-# ── 6) Node 20 + n8n + Puppeteer ─────────────────────────────────────────────
+# 6) Node 20 + n8n + Puppeteer
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get update && apt-get install -y --no-install-recommends nodejs && \
     npm install -g --unsafe-perm n8n@1.104.2 puppeteer@24.15.0 n8n-nodes-puppeteer@1.4.1 && \
     npm cache clean --force && chown -R node:node /home/node/.npm && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ── 7) Puppeteer’s managed Chromium ──────────────────────────────────────────
+# 7) Puppeteer’s Chromium (node user)
 USER node
 RUN npx puppeteer@24.15.0 browsers install chrome
 USER root
 
-# ── 8) Torch/cu118 + Whisper ────────────────────────────────────────────────
+# 7b) **RESTORE CHROME SANDBOX**
+RUN cp "$PUPPETEER_CACHE_DIR"/chrome/linux-*/chrome-linux*/chrome_sandbox /usr/local/sbin/chrome-devel-sandbox && \
+    chown root:root /usr/local/sbin/chrome-devel-sandbox && \
+    chmod 4755      /usr/local/sbin/chrome-devel-sandbox
+ENV CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
+
+# 8) Torch/cu118 + Whisper
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir \
         torch==2.3.1+cu118 torchvision==0.18.1+cu118 torchaudio==2.3.1+cu118 \
@@ -156,29 +159,31 @@ RUN python3.10 -m pip install --upgrade pip && \
         numba==0.61.2 tiktoken==0.9.0 \
         git+https://github.com/openai/whisper.git@v20250625
 
-# ── 9) download + dynamic-INT8 quantise Whisper *medium* (CPU) ───────────────
+# 9) pre-download Whisper *medium* in FP-16  (GPU-friendly)
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
     printf '%s\n' \
-      "import os, torch, whisper, torch.nn as nn" \
-      "root = os.environ['WHISPER_MODEL_PATH']" \
-      "model = whisper.load_model('medium', device='cpu')" \
-      "model_q = torch.quantization.quantize_dynamic(model, {nn.Linear, nn.LSTM}, dtype=torch.qint8)" \
-      "torch.save(model_q.state_dict(), os.path.join(root, 'medium.pt'))" \
-    > /tmp/quantise.py && python3.10 /tmp/quantise.py && rm /tmp/quantise.py
+      "import os, torch, hashlib, json, whisper" \
+      "out = os.environ['WHISPER_MODEL_PATH']" \
+      "m   = whisper.load_model('medium', device='cpu').half()" \
+      "pt  = os.path.join(out, 'medium.pt')" \
+      "torch.save(m.state_dict(), pt)" \
+      "h = hashlib.sha256(open(pt,'rb').read()).hexdigest()[:20]" \
+      "json.dump({'sha256': h}, open(pt + '.json','w'))" \
+    > /tmp/preload.py && python3.10 /tmp/preload.py && rm /tmp/preload.py
 
-# ── 9b) symlink so  load_model('medium')  works out-of-the-box ───────────────
+# 9b) default cache symlink
 RUN mkdir -p /home/node/.cache && \
     ln -s /usr/local/lib/whisper_models /home/node/.cache/whisper && \
     chown -h node:node /home/node/.cache/whisper
 
-# ── 10) quick sanity-check FFmpeg sees CUDA ──────────────────────────────────
+# 10) FFmpeg CUDA check
 RUN ffmpeg -hide_banner -hwaccels | grep -q cuda
 
-# ── 11) PATH shim (static /usr/local/bin first after NVIDIA hook) ────────────
+# 11) PATH shim
 RUN printf '%s\n' '#!/bin/sh' 'export PATH=/usr/local/bin:$PATH' 'exec "$@"' \
     > /usr/local/bin/n8n-wrapper && chmod +x /usr/local/bin/n8n-wrapper
 
-# ── 12) health-check + entrypoint ────────────────────────────────────────────
+# 12) health-check & entrypoint
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
 
