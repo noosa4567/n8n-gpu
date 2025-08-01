@@ -28,9 +28,7 @@ RUN git clone --branch n11.1.5.3 https://github.com/FFmpeg/nv-codec-headers.git 
     make -C nv-codec-headers -j"$(nproc)" install && \
     rm -rf nv-codec-headers
 
-# 3) Build external codecs as static archives:
-#    - x264, fdk-aac, lame, opus, vorbis, vpx
-#    ensures ffmpeg links only to .a, no .so at runtime
+# 3) Build external codecs as static archives (.a only)
 RUN git clone https://code.videolan.org/videolan/x264.git && \
     cd x264 && \
       ./configure --prefix="$PREFIX" --enable-static --disable-shared --disable-opencl && \
@@ -71,7 +69,6 @@ RUN git clone https://chromium.googlesource.com/webm/libvpx.git && \
     cd .. && rm -rf libvpx
 
 # 4) Configure & build FFmpeg itself, fully static + CUDA/NVENC
-#    - disable sdl2, sndio, X11 grab, Xv, OpenGL to avoid pulling host .so
 RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git && \
     cd FFmpeg && \
     PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig" ./configure \
@@ -94,6 +91,7 @@ RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git && \
 # 5) Clean up build directory (slim down image)
 RUN rm -rf "$BUILD_DIR"
 
+
 ###############################################################################
 # Stage 2 ─ runtime: CUDA 11.8 + n8n + Whisper + Puppeteer + Chrome
 ###############################################################################
@@ -101,22 +99,19 @@ FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Ensure static ffmpeg wins, torch can see drivers, and GPUs are exposed
+# Ensure static ffmpeg wins, system libs load before NVIDIA drivers, and GPUs are exposed
 ENV HOME=/home/node \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable \
-    # include host-mounted NVIDIA driver libs for PyTorch/CUDA
-    LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64:/usr/local/nvidia/lib:$LD_LIBRARY_PATH \
+    LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64 \
     TZ=Australia/Brisbane \
     PIP_ROOT_USER_ACTION=ignore \
-    # ensure our static /usr/local/bin ffmpeg stays first
     PATH=/usr/local/bin:$PATH \
-    # signal NVIDIA runtime to expose GPUs
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
 
-# 1) Install base OS libs, Chrome deps (lsb-release & xdg-utils needed by Chrome)
+# 1) Install base OS libs, Chrome deps
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       software-properties-common ca-certificates curl git wget gnupg tini \
@@ -138,42 +133,36 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends google-chrome-stable && \
     rm -rf /var/lib/apt/lists/*
 
-# 2) Legacy soname symlinks for NVENC driver blobs (sndio & VA-API)
-RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0 \
-          /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2 \
-          /usr/lib/x86_64-linux-gnu/libva.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2 \
-          /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2 \
-          /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 \
-          /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
+# 2) Legacy soname symlinks for NVENC driver blobs
+RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0   /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2        /usr/lib/x86_64-linux-gnu/libva.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2    /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2    /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
 
-# 3) Remove NVIDIA GBM stubs (they crash headless Chrome)
+# 3) Remove NVIDIA GBM stubs that crash headless Chrome
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
            /usr/local/nvidia/lib*/*gbm* \
            /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
 
-# 4) Create non-root 'node' user and prepare cache dirs for n8n & Puppeteer
+# 4) Create non-root user + cache dirs
 RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" "$PUPPETEER_CACHE_DIR" && \
     chown -R node:node "$HOME"
 
-# 5) Copy static FFmpeg & FFprobe, then symlink into /usr/local/nvidia/bin
+# 5) Copy static FFmpeg & FFprobe, then symlink into NVIDIA bin
 COPY --from=ffmpeg-builder /usr/local/bin/ffmpeg  /usr/local/bin/ffmpeg
 COPY --from=ffmpeg-builder /usr/local/bin/ffprobe /usr/local/bin/ffprobe
 RUN mkdir -p /usr/local/nvidia/bin && \
     ln -sf /usr/local/bin/ffmpeg  /usr/local/nvidia/bin/ffmpeg && \
     ln -sf /usr/local/bin/ffprobe /usr/local/nvidia/bin/ffprobe
 
-# 6) Install Node.js 20, n8n & Puppeteer globally (root), then fix npm cache perms
+# 6) Install Node.js 20, n8n & Puppeteer globally; fix npm perms
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get update && \
     apt-get install -y --no-install-recommends nodejs && \
-    npm install -g --unsafe-perm \
-      n8n@1.104.1 puppeteer@24.15.0 n8n-nodes-puppeteer@1.4.1 && \
+    npm install -g --unsafe-perm n8n@1.104.1 puppeteer@24.15.0 n8n-nodes-puppeteer@1.4.1 && \
     npm cache clean --force && \
     chown -R node:node /home/node/.npm && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -183,38 +172,36 @@ USER node
 RUN npx puppeteer@24.15.0 browsers install chrome
 USER root
 
-# 8) Install Whisper + Torch (CUDA wheels) & satisfy new whisper deps
+# 8) Install Whisper + Torch (CUDA wheels) & deps
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir \
       torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
-    python3.10 -m pip install --no-cache-dir numba tiktoken && \
-    python3.10 -m pip install --no-cache-dir \
-      git+https://github.com/openai/whisper.git
+    python3.10 -m pip install --no-install-recommends numba tiktoken git+https://github.com/openai/whisper.git
 
-# 9) Pre-download Whisper “tiny” model for faster cold start (no heredoc)
+# 9) Pre-download Whisper “medium” model into image
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
-    echo "import whisper, os; whisper.load_model('tiny', download_root=os.environ['WHISPER_MODEL_PATH'])" \
+    echo "import whisper, os; whisper.load_model('medium', download_root=os.environ['WHISPER_MODEL_PATH'])" \
       > /tmp/preload_whisper.py && \
     python3.10 /tmp/preload_whisper.py && rm /tmp/preload_whisper.py
 
-# 10) Sanity-check FFmpeg: must be static and list CUDA hwaccels
+# 10) Sanity-check FFmpeg & CUDA hwaccels
 RUN which -a ffmpeg && \
     ldd /usr/local/bin/ffmpeg | grep -E 'not a dynamic executable|sndio|libva' || true && \
     ffmpeg -hide_banner -hwaccels | grep cuda
 
-# 11) Tiny shim: run *after* NVIDIA hook to force /usr/local/bin first
+# 11) Tiny shim wrapper to re-order PATH *after* NVIDIA hook
 RUN printf '%s\n' \
     '#!/bin/sh' \
     'export PATH=/usr/local/bin:$PATH' \
     'exec "$@"' \
   > /usr/local/bin/n8n-wrapper && chmod +x /usr/local/bin/n8n-wrapper
 
-# 12) Healthcheck & final entrypoint (include "start")
+# 12) Healthcheck & final entrypoint (n8n start)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
 
 USER node
 WORKDIR $HOME
 EXPOSE 5678
-ENTRYPOINT ["tini","--","/usr/local/bin/n8n-wrapper","n8n","start"]
-CMD []
+ENTRYPOINT ["tini","--","/usr/local/bin/n8n-wrapper","n8n"]
+CMD ["start"]
