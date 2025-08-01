@@ -101,15 +101,20 @@ FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Ensure our static /usr/local/bin ffmpeg stays first even after NVIDIA hook
+# Ensure static ffmpeg wins, torch can see drivers, and GPUs are exposed
 ENV HOME=/home/node \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable \
-    LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64 \
+    # include host-mounted NVIDIA driver libs for PyTorch/CUDA
+    LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64:/usr/local/nvidia/lib:$LD_LIBRARY_PATH \
     TZ=Australia/Brisbane \
     PIP_ROOT_USER_ACTION=ignore \
-    PATH=/usr/local/bin:$PATH    
+    # ensure our static /usr/local/bin ffmpeg stays first
+    PATH=/usr/local/bin:$PATH \
+    # signal NVIDIA runtime to expose GPUs
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
 
 # 1) Install base OS libs, Chrome deps (lsb-release & xdg-utils needed by Chrome)
 RUN apt-get update && \
@@ -134,13 +139,13 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # 2) Legacy soname symlinks for NVENC driver blobs (sndio & VA-API)
-RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0   \
+RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0 \
           /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2        \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2 \
           /usr/lib/x86_64-linux-gnu/libva.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2    \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2 \
           /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2    \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2 \
           /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 \
           /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
@@ -186,12 +191,11 @@ RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir \
       git+https://github.com/openai/whisper.git
 
-# 9) Pre-download Whisper “tiny” model for faster cold start
+# 9) Pre-download Whisper “tiny” model for faster cold start (no heredoc)
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
-    python3.10 - <<'PY'
-import whisper, os
-whisper.load_model("tiny", download_root=os.environ["WHISPER_MODEL_PATH"])
-PY
+    echo "import whisper, os; whisper.load_model('tiny', download_root=os.environ['WHISPER_MODEL_PATH'])" \
+      > /tmp/preload_whisper.py && \
+    python3.10 /tmp/preload_whisper.py && rm /tmp/preload_whisper.py
 
 # 10) Sanity-check FFmpeg: must be static and list CUDA hwaccels
 RUN which -a ffmpeg && \
@@ -203,16 +207,14 @@ RUN printf '%s\n' \
     '#!/bin/sh' \
     'export PATH=/usr/local/bin:$PATH' \
     'exec "$@"' \
-  > /usr/local/bin/n8n-wrapper && \
-  chmod +x /usr/local/bin/n8n-wrapper
+  > /usr/local/bin/n8n-wrapper && chmod +x /usr/local/bin/n8n-wrapper
 
-# 12) Healthcheck & final entrypoint
+# 12) Healthcheck & final entrypoint (include "start")
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
 
 USER node
 WORKDIR $HOME
-
 EXPOSE 5678
-ENTRYPOINT ["tini","--","/usr/local/bin/n8n-wrapper","n8n"]
+ENTRYPOINT ["tini","--","/usr/local/bin/n8n-wrapper","n8n","start"]
 CMD []
