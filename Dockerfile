@@ -103,13 +103,17 @@ RUN python3.10 -m pip install --upgrade pip && \
       tiktoken==0.9.0 \
       git+https://github.com/openai/whisper.git@v20250625
 
-# ── 9) Pre-download Whisper “small” (no heredoc)
+# 9) pre-download Whisper *medium* in FP-16  (GPU-friendly)
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
-    python3.10 -c "\
-import os, whisper, torch; \
-root = os.environ['WHISPER_MODEL_PATH']; \
-model = whisper.load_model('small', device='cpu'); \
-torch.save(model.state_dict(), os.path.join(root,'small.pt'))"
+    printf '%s\n' \
+      "import os, torch, hashlib, json, whisper" \
+      "out = os.environ['WHISPER_MODEL_PATH']" \
+      "m   = whisper.load_model('medium', device='cpu').half()" \
+      "pt  = os.path.join(out, 'medium.pt')" \
+      "torch.save(m.state_dict(), pt)" \
+      "h = hashlib.sha256(open(pt,'rb').read()).hexdigest()[:20]" \
+      "json.dump({'sha256': h}, open(pt + '.json','w'))" \
+    > /tmp/preload.py && python3.10 /tmp/preload.py && rm /tmp/preload.py
 
 # ── 9b) Create cache symlink for Whisper
 RUN mkdir -p /home/node/.cache && \
