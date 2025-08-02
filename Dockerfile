@@ -21,7 +21,7 @@ ENV HOME=/home/node \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
 
-#── 1) Base OS libs + Chrome
+#── 1) Base OS libs + Google Chrome
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       software-properties-common ca-certificates curl git wget gnupg tini \
@@ -61,7 +61,7 @@ RUN groupadd -r node && \
     mkdir -p "$HOME/.n8n" "$PUPPETEER_CACHE_DIR" && \
     chown -R node:node "$HOME"
 
-#── 5) Copy FFmpeg + its libs, then ldconfig
+#── 5) Copy FFmpeg + its .so libs, then ldconfig
 COPY --from=ffmpeg /usr/local/bin/ffmpeg       /usr/local/bin/ffmpeg
 COPY --from=ffmpeg /usr/local/bin/ffprobe      /usr/local/bin/ffprobe
 COPY --from=ffmpeg /usr/local/lib/*.so.*       /usr/local/lib/
@@ -80,7 +80,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-#── 6b) Make globals resolvable via require()
+#── 6b) Make global modules resolvable via require()
 ENV NODE_PATH=/usr/local/lib/node_modules
 
 #── 7) Fetch Puppeteer’s Chromium & restore sandbox
@@ -93,7 +93,7 @@ RUN cp "$PUPPETEER_CACHE_DIR"/chrome/linux-*/chrome-linux*/chrome_sandbox \
     chmod 4755      /usr/local/sbin/chrome-devel-sandbox
 ENV CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
 
-#── 8) Chrome “warm-up” (run as root so NODE_PATH applies)
+#── 8) Chrome “warm-up” (root, so NODE_PATH applies)
 RUN node -e "const p=require('puppeteer');(async()=>{const b=await p.launch({headless:true});const pg=await b.newPage();await pg.goto('about:blank',{timeout:60000});await b.close();})();"
 
 #── 9) Torch/CUDA wheels + Whisper
@@ -127,14 +127,14 @@ RUN mkdir -p /home/node/.cache && \
 #── 12) Sanity-check: CUDA hwaccels visible
 RUN ffmpeg -hide_banner -hwaccels | grep -q cuda
 
-#── 13) PATH shim (prioritize /usr/local/bin)
+#── 13) PATH-shim (prioritize /usr/local/bin)
 RUN printf '%s\n' \
       '#!/bin/sh' \
       'export PATH=/usr/local/bin:$PATH' \
       'exec "$@"' \
     > /usr/local/bin/n8n-wrapper && chmod +x /usr/local/bin/n8n-wrapper
 
-#── 14) Health-check & entrypoint
+#── 14) Health-check & final entrypoint
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
 
