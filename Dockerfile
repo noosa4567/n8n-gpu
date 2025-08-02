@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1
 ###############################################################################
-# Stage 1 — pull a proven, GPU-accelerated FFmpeg (dynamic, CUDA 12.0)
+# Stage 1 ─ pull a proven, GPU-accelerated FFmpeg (dynamic, CUDA 12.0)
 ###############################################################################
 FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 
 ###############################################################################
-# Stage 2 — runtime: CUDA 12.1-devel – n8n + Chrome + Torch/Whisper (medium)
+# Stage 2 ─ runtime: CUDA 12.1-devel – n8n + Chrome + Torch/Whisper (medium)
 ###############################################################################
 FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 
@@ -43,7 +43,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends google-chrome-stable && \
     rm -rf /var/lib/apt/lists/*
 
-#── 2) Legacy NVENC soname symlinks
+#── 2) Legacy NVENC sonames
 RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0 \
           /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2 \
@@ -67,9 +67,9 @@ RUN groupadd -r node && \
     chown -R node:node "$HOME"
 
 #── 5) Copy FFmpeg binary + all its shared libs, then update cache
-COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
-COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
-COPY --from=ffmpeg /usr/local/lib/*.so.* /usr/local/lib/
+COPY --from=ffmpeg /usr/local/bin/ffmpeg       /usr/local/bin/ffmpeg
+COPY --from=ffmpeg /usr/local/bin/ffprobe      /usr/local/bin/ffprobe
+COPY --from=ffmpeg /usr/local/lib/*.so.*       /usr/local/lib/
 RUN ldconfig
 
 #── 6) Install Node 20, n8n & Puppeteer globally
@@ -82,7 +82,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
       n8n-nodes-puppeteer@1.4.1 && \
     npm cache clean --force && \
     chown -R node:node /home/node/.npm && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+    chown -R node:node /usr/local/lib/node_modules/puppeteer* && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 #── 7) Puppeteer’s Chromium + restore sandbox
 USER node
@@ -91,20 +93,19 @@ USER root
 RUN cp "$PUPPETEER_CACHE_DIR"/chrome/linux-*/chrome-linux*/chrome_sandbox \
         /usr/local/sbin/chrome-devel-sandbox && \
     chown root:root /usr/local/sbin/chrome-devel-sandbox && \
-    chmod 4755 /usr/local/sbin/chrome-devel-sandbox
+    chmod 4755      /usr/local/sbin/chrome-devel-sandbox
 ENV CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
 
-#── 8) Chrome “warm-up” to avoid first-run hang
-USER node
-RUN node -e "const p=require('puppeteer');(async()=>{ \
-  const b=await p.launch({headless:true}); \
-  const page=await b.newPage(); \
-  await page.goto('about:blank',{timeout:60000}); \
-  await b.close(); \
+#── 8) Chrome “warm-up” (as root) to prime first-run profile
+RUN node -e "const p = require('puppeteer'); (async () => {
+  const browser = await p.launch({ headless: true });
+  const page = await browser.newPage();
+  await page.goto('about:blank', { timeout: 60000 });
+  await browser.close();
 })();"
 
 #── 9) Install Torch/CUDA wheels + Whisper
-USER root
+USER node
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir \
       torch==2.3.1+cu121 \
@@ -120,12 +121,12 @@ RUN python3.10 -m pip install --upgrade pip && \
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
     python3.10 -c "\
 import os, torch, hashlib, json, whisper; \
-out=os.environ['WHISPER_MODEL_PATH']; \
-m=whisper.load_model('medium', device='cpu').half(); \
-pt=os.path.join(out,'medium.pt'); \
-torch.save(m.state_dict(),pt); \
-h=hashlib.sha256(open(pt,'rb').read()).hexdigest()[:20]; \
-json.dump({'sha256':h},open(pt+'.json','w'))"
+out = os.environ['WHISPER_MODEL_PATH']; \
+m = whisper.load_model('medium', device='cpu').half(); \
+pt = os.path.join(out, 'medium.pt'); \
+torch.save(m.state_dict(), pt); \
+h = hashlib.sha256(open(pt,'rb').read()).hexdigest()[:20]; \
+json.dump({'sha256': h}, open(pt + '.json','w'));"
 
 #── 11) Cache symlink for Whisper
 RUN mkdir -p /home/node/.cache && \
