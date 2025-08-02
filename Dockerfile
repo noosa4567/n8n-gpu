@@ -36,16 +36,16 @@ RUN apt-get update && \
       libatspi2.0-0 libgcc1 libstdc++6 && \
     curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | apt-key add - && \
     echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
-         > /etc/apt/sources.list.d/google-chrome.list && \
+      > /etc/apt/sources.list.d/google-chrome.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends google-chrome-stable && \
     rm -rf /var/lib/apt/lists/*
 
 #── 2) Legacy NVENC soname symlinks
-RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0   /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2        /usr/lib/x86_64-linux-gnu/libva.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2    /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2    /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
+RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0 /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2      /usr/lib/x86_64-linux-gnu/libva.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2 /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2 /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
 
 #── 3) Strip NVIDIA GBM stubs (fixes headless Chrome <115)
@@ -74,10 +74,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
       puppeteer@24.15.0 \
       n8n-nodes-puppeteer@1.4.1 && \
     npm cache clean --force && \
-    # ensure node user can write its own npm cache
     mkdir -p /home/node/.npm && chown -R node:node /home/node/.npm && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 #── 7) Puppeteer’s Chromium + restore sandbox
 USER node
@@ -90,8 +88,12 @@ RUN cp "$PUPPETEER_CACHE_DIR"/chrome/linux-*/chrome-linux*/chrome_sandbox \
     chmod 4755           /usr/local/sbin/chrome-devel-sandbox
 ENV CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
 
-#── 8) Chrome “warm-up” (root, NODE_PATH in effect)
-RUN node -e "const p = require('puppeteer'); (async()=>{ \
+#── 8) Chrome “warm-up” (root, dynamic lookup of where Puppeteer actually lives)
+RUN node -e "const { execSync } = require('child_process'); \
+const path = require('path'); \
+const npmRoot = execSync('npm root -g').toString().trim(); \
+const p = require(path.join(npmRoot, 'puppeteer')); \
+(async()=>{ \
   const b = await p.launch({ \
     headless: true, \
     args: ['--no-sandbox','--disable-setuid-sandbox'] \
@@ -118,9 +120,9 @@ RUN python3.10 -m pip install --upgrade pip && \
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
     python3.10 -c "\
 import os, torch, hashlib, json, whisper; \
-out=os.environ['WHISPER_MODEL_PATH']; \
+out = os.environ['WHISPER_MODEL_PATH']; \
 m = whisper.load_model('medium', device='cpu').half(); \
-pt = os.path.join(out, 'medium.pt'); \
+pt = os.path.join(out,'medium.pt'); \
 torch.save(m.state_dict(), pt); \
 h = hashlib.sha256(open(pt,'rb').read()).hexdigest()[:20]; \
 json.dump({'sha256':h}, open(pt + '.json','w'));"
@@ -144,7 +146,7 @@ RUN printf '%s\n' \
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
 
-# Drop to node for runtime
+# Drop to node user for runtime
 USER node
 WORKDIR "$HOME"
 EXPOSE 5678
