@@ -42,11 +42,16 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 #── 2) Legacy NVENC soname symlinks
-RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0 /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2      /usr/lib/x86_64-linux-gnu/libva.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2 /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2 /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
+RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0 \
+           /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2      \
+           /usr/lib/x86_64-linux-gnu/libva.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2  \
+           /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2  \
+           /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 \
+           /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
 
 #── 3) Strip NVIDIA GBM stubs (fixes headless Chrome <115)
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
@@ -59,10 +64,14 @@ RUN groupadd -r node && \
     mkdir -p "$HOME/.n8n" "$PUPPETEER_CACHE_DIR" && \
     chown -R node:node "$HOME"
 
-#── 5) Copy FFmpeg + its libs, then ldconfig
-COPY --from=ffmpeg /usr/local/bin/ffmpeg       /usr/local/bin/ffmpeg
-COPY --from=ffmpeg /usr/local/bin/ffprobe      /usr/local/bin/ffprobe
-COPY --from=ffmpeg /usr/local/lib/*.so.*       /usr/local/lib/
+#── 4b) Ensure Puppeteer’s config dir is writable by node
+RUN mkdir -p /home/node/.config/puppeteer && \
+    chown -R node:node /home/node/.config
+
+#── 5) Copy FFmpeg + its libs, then update linker cache
+COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/ffmpeg
+COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
+COPY --from=ffmpeg /usr/local/lib/*.so.*    /usr/local/lib/
 RUN ldconfig
 
 #── 6) Install Node 20, n8n & Puppeteer globally
@@ -88,22 +97,22 @@ RUN cp "$PUPPETEER_CACHE_DIR"/chrome/linux-*/chrome-linux*/chrome_sandbox \
     chmod 4755           /usr/local/sbin/chrome-devel-sandbox
 ENV CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
 
-#── 8) Chrome “warm-up” (root, dynamic lookup of where Puppeteer actually lives)
+#── 8) Chrome “warm-up” (root, dynamic lookup of Puppeteer install path)
 RUN node -e "const { execSync } = require('child_process'); \
 const path = require('path'); \
 const npmRoot = execSync('npm root -g').toString().trim(); \
 const p = require(path.join(npmRoot, 'puppeteer')); \
-(async()=>{ \
+(async ()=>{ \
   const b = await p.launch({ \
     headless: true, \
     args: ['--no-sandbox','--disable-setuid-sandbox'] \
   }); \
   const pg = await b.newPage(); \
-  await pg.goto('about:blank',{timeout:60000}); \
+  await pg.goto('about:blank', { timeout: 60000 }); \
   await b.close(); \
 })();"
 
-#── 9) Install Torch/CUDA wheels + Whisper (as root)
+#── 9) Install Torch/CUDA wheels + Whisper
 USER root
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir \
@@ -122,7 +131,7 @@ RUN mkdir -p "$WHISPER_MODEL_PATH" && \
 import os, torch, hashlib, json, whisper; \
 out = os.environ['WHISPER_MODEL_PATH']; \
 m = whisper.load_model('medium', device='cpu').half(); \
-pt = os.path.join(out,'medium.pt'); \
+pt = os.path.join(out, 'medium.pt'); \
 torch.save(m.state_dict(), pt); \
 h = hashlib.sha256(open(pt,'rb').read()).hexdigest()[:20]; \
 json.dump({'sha256':h}, open(pt + '.json','w'));"
@@ -135,7 +144,7 @@ RUN mkdir -p /home/node/.cache && \
 #── 12) Sanity-check: CUDA hwaccels visible
 RUN ffmpeg -hide_banner -hwaccels | grep -q cuda
 
-#── 13) Tiny PATH-shim to prioritize /usr/local/bin
+#── 13) Tiny PATH-shim so /usr/local/bin comes first
 RUN printf '%s\n' \
       '#!/bin/sh' \
       'export PATH=/usr/local/bin:$PATH' \
@@ -146,7 +155,7 @@ RUN printf '%s\n' \
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
 
-# Drop to node user for runtime
+# Drop to node for runtime
 USER node
 WORKDIR "$HOME"
 EXPOSE 5678
