@@ -5,7 +5,7 @@
 FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 
 ###############################################################################
-# Stage 2 ─ runtime: CUDA 12.1-devel – n8n + Chrome + Torch/Whisper (medium)
+# Stage 2 ─ runtime: CUDA 12.1-devel – n8n + Chrome + Torch/Whisper (medium.en)
 ###############################################################################
 FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 
@@ -42,16 +42,11 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 #── 2) Legacy NVENC soname symlinks
-RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0 \
-           /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2      \
-           /usr/lib/x86_64-linux-gnu/libva.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2  \
-           /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2  \
-           /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 \
-           /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
+RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0   /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2       /usr/lib/x86_64-linux-gnu/libva.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2   /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2   /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
 
 #── 3) Strip NVIDIA GBM stubs (fixes headless Chrome <115)
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
@@ -112,7 +107,7 @@ const p = require(path.join(npmRoot, 'puppeteer')); \
   await b.close(); \
 })();"
 
-#── 9) Install Torch/CUDA wheels + Whisper
+#── 9) Install Torch/CUDA wheels + Whisper (as root)
 USER root
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir \
@@ -125,16 +120,18 @@ RUN python3.10 -m pip install --upgrade pip && \
       tiktoken==0.9.0 \
       git+https://github.com/openai/whisper.git@v20250625
 
-#── 10) Pre-download Whisper medium (FP16, CPU at build time)
+#── 10) Pre-download **full English-only Medium** (FP32 on CPU at build time)
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
     python3.10 -c "\
 import os, torch, hashlib, json, whisper; \
-out = os.environ['WHISPER_MODEL_PATH']; \
-m = whisper.load_model('medium', device='cpu').half(); \
-pt = os.path.join(out, 'medium.pt'); \
+out=os.environ['WHISPER_MODEL_PATH']; \
+# load the full English-only Medium in FP32 on CPU and save its weights \
+m = whisper.load_model('medium.en', device='cpu'); \
+pt = os.path.join(out, 'medium.en.pt'); \
 torch.save(m.state_dict(), pt); \
-h = hashlib.sha256(open(pt,'rb').read()).hexdigest()[:20]; \
-json.dump({'sha256':h}, open(pt + '.json','w'));"
+h = hashlib.sha256(open(pt, 'rb').read()).hexdigest()[:20]; \
+json.dump({'sha256': h}, open(pt + '.json','w'));\
+"
 
 #── 11) Whisper cache symlink
 RUN mkdir -p /home/node/.cache && \
