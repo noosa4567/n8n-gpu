@@ -81,7 +81,7 @@ RUN cp "$PUPPETEER_CACHE_DIR"/chrome/linux-*/chrome-linux*/chrome_sandbox \
     chmod 4755 /usr/local/sbin/chrome-devel-sandbox
 ENV CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
 #── 8) Chrome “warm-up” (root, NODE_PATH in effect)
-RUN node -e "const { execSync } = require('child_process'); const npmRoot = execSync('npm root -g').toString().trim(); const p=require(`${npmRoot}/puppeteer`);(async()=>{ \
+RUN node -e "const { execSync } = require('child_process'); const npmRoot = execSync('npm root -g').toString().trim(); const p=require(npmRoot + '/puppeteer');(async()=>{ \
   const b=await p.launch({ \
     headless: true, \
     args: ['--no-sandbox','--disable-setuid-sandbox'] \
