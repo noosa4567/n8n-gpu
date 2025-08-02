@@ -97,12 +97,7 @@ RUN cp "$PUPPETEER_CACHE_DIR"/chrome/linux-*/chrome-linux*/chrome_sandbox \
 ENV CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
 
 #── 8) Chrome “warm-up” (as root) to prime first-run profile
-RUN node -e "const p = require('puppeteer'); (async () => {
-  const browser = await p.launch({ headless: true });
-  const page = await browser.newPage();
-  await page.goto('about:blank', { timeout: 60000 });
-  await browser.close();
-})();"
+RUN node -e "const p=require('puppeteer');(async()=>{const b=await p.launch({headless:true});const pg=await b.newPage();await pg.goto('about:blank',{timeout:60000});await b.close();})();"
 
 #── 9) Install Torch/CUDA wheels + Whisper
 USER node
