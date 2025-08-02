@@ -1,16 +1,15 @@
 # syntax=docker/dockerfile:1
 ###############################################################################
-# Stage 1 ─ pull a proven, GPU-accelerated FFmpeg (dynamic, CUDA 12.0)
+# Stage 1 — pull a proven, GPU-accelerated FFmpeg (dynamic, CUDA 12.0)
 ###############################################################################
 FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 
 ###############################################################################
-# Stage 2 ─ runtime: CUDA 12.1-devel – n8n + Chrome + Torch/Whisper (small)
+# Stage 2 — runtime: CUDA 12.1-devel – n8n + Chrome + Torch/Whisper (medium)
 ###############################################################################
 FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
-
 ENV HOME=/home/node \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
@@ -22,7 +21,7 @@ ENV HOME=/home/node \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
 
-# ── 1) Base OS libs + Google Chrome
+#── 1) Base OS libs + Google Chrome
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       software-properties-common ca-certificates curl git wget gnupg tini \
@@ -44,31 +43,36 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends google-chrome-stable && \
     rm -rf /var/lib/apt/lists/*
 
-# ── 2) Legacy NVENC soname symlinks
-RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0   /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2        /usr/lib/x86_64-linux-gnu/libva.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2    /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2    /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
+#── 2) Legacy NVENC soname symlinks
+RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0 \
+          /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2 \
+          /usr/lib/x86_64-linux-gnu/libva.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2 \
+          /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2 \
+          /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 \
+          /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
 
-# ── 3) Remove NVIDIA GBM stubs (fixes headless Chrome <115)
+#── 3) Strip NVIDIA GBM stubs (fixes headless Chrome <115)
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
            /usr/local/nvidia/lib*/*gbm* \
            /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
 
-# ── 4) Create non-root “node” user
+#── 4) Create non-root “node” user
 RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" "$PUPPETEER_CACHE_DIR" && \
     chown -R node:node "$HOME"
 
-# ── 5) Copy FFmpeg binary + all shared libs, then update cache
-COPY --from=ffmpeg /usr/local/bin/ffmpeg       /usr/local/bin/ffmpeg
-COPY --from=ffmpeg /usr/local/bin/ffprobe      /usr/local/bin/ffprobe
-COPY --from=ffmpeg /usr/local/lib/*.so.*       /usr/local/lib/
+#── 5) Copy FFmpeg binary + all its shared libs, then update cache
+COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
+COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
+COPY --from=ffmpeg /usr/local/lib/*.so.* /usr/local/lib/
 RUN ldconfig
 
-# ── 6) Install Node 20, n8n & Puppeteer globally
+#── 6) Install Node 20, n8n & Puppeteer globally
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get update && \
     apt-get install -y --no-install-recommends nodejs && \
@@ -78,20 +82,29 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
       n8n-nodes-puppeteer@1.4.1 && \
     npm cache clean --force && \
     chown -R node:node /home/node/.npm && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ── 7) Puppeteer’s Chromium + sandbox restore
+#── 7) Puppeteer’s Chromium + restore sandbox
 USER node
 RUN npx puppeteer@24.15.0 browsers install chrome
 USER root
 RUN cp "$PUPPETEER_CACHE_DIR"/chrome/linux-*/chrome-linux*/chrome_sandbox \
         /usr/local/sbin/chrome-devel-sandbox && \
     chown root:root /usr/local/sbin/chrome-devel-sandbox && \
-    chmod 4755      /usr/local/sbin/chrome-devel-sandbox
+    chmod 4755 /usr/local/sbin/chrome-devel-sandbox
 ENV CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
 
-# ── 8) Install Torch/CUDA wheels + Whisper
+#── 8) Chrome “warm-up” to avoid first-run hang
+USER node
+RUN node -e "const p=require('puppeteer');(async()=>{ \
+  const b=await p.launch({headless:true}); \
+  const page=await b.newPage(); \
+  await page.goto('about:blank',{timeout:60000}); \
+  await b.close(); \
+})();"
+
+#── 9) Install Torch/CUDA wheels + Whisper
+USER root
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir \
       torch==2.3.1+cu121 \
@@ -103,34 +116,33 @@ RUN python3.10 -m pip install --upgrade pip && \
       tiktoken==0.9.0 \
       git+https://github.com/openai/whisper.git@v20250625
 
-# 9) pre-download Whisper *medium* in FP-16  (GPU-friendly)
+#── 10) Pre-download Whisper medium (FP16, GPU-optimized)
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
-    printf '%s\n' \
-      "import os, torch, hashlib, json, whisper" \
-      "out = os.environ['WHISPER_MODEL_PATH']" \
-      "m   = whisper.load_model('medium', device='cpu').half()" \
-      "pt  = os.path.join(out, 'medium.pt')" \
-      "torch.save(m.state_dict(), pt)" \
-      "h = hashlib.sha256(open(pt,'rb').read()).hexdigest()[:20]" \
-      "json.dump({'sha256': h}, open(pt + '.json','w'))" \
-    > /tmp/preload.py && python3.10 /tmp/preload.py && rm /tmp/preload.py
+    python3.10 -c "\
+import os, torch, hashlib, json, whisper; \
+out=os.environ['WHISPER_MODEL_PATH']; \
+m=whisper.load_model('medium', device='cpu').half(); \
+pt=os.path.join(out,'medium.pt'); \
+torch.save(m.state_dict(),pt); \
+h=hashlib.sha256(open(pt,'rb').read()).hexdigest()[:20]; \
+json.dump({'sha256':h},open(pt+'.json','w'))"
 
-# ── 9b) Create cache symlink for Whisper
+#── 11) Cache symlink for Whisper
 RUN mkdir -p /home/node/.cache && \
     ln -s /usr/local/lib/whisper_models /home/node/.cache/whisper && \
     chown -h node:node /home/node/.cache/whisper
 
-# ── 10) Sanity-check: CUDA hwaccels visible to FFmpeg
+#── 12) Sanity-check: CUDA hwaccels visible to FFmpeg
 RUN ffmpeg -hide_banner -hwaccels | grep -q cuda
 
-# ── 11) Tiny PATH-shim to prioritize /usr/local/bin
+#── 13) Tiny PATH-shim to prioritize /usr/local/bin
 RUN printf '%s\n' \
       '#!/bin/sh' \
       'export PATH=/usr/local/bin:$PATH' \
       'exec "$@"' \
     > /usr/local/bin/n8n-wrapper && chmod +x /usr/local/bin/n8n-wrapper
 
-# ── 12) Health-check & final entrypoint
+#── 14) Health-check & final entrypoint
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
 
