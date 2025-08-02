@@ -93,12 +93,10 @@ RUN cp "$PUPPETEER_CACHE_DIR"/chrome/linux-*/chrome-linux*/chrome_sandbox \
     chmod 4755      /usr/local/sbin/chrome-devel-sandbox
 ENV CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
 
-# ── 8) Chrome “warm-up” to prime the first-run profile
-USER node
+# ── 8) Chrome “warm-up” to prime the first-run profile (run as root)
 RUN node -e "const p=require('puppeteer');(async()=>{const b=await p.launch({headless:true});const pg=await b.newPage();await pg.goto('about:blank',{timeout:60000});await b.close();})();"
 
 # ── 9) Install Torch/CUDA wheels + Whisper
-USER root
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir \
       torch==2.3.1+cu121 \
