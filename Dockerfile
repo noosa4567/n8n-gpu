@@ -106,7 +106,7 @@ RUN npx puppeteer@24.15.0 node -e "\
     await browser.close();\
   })();"
 
-# 9) Install Torch/CUDA wheels + Whisper (as root)
+# 9) Install Torch/CUDA wheels + Whisper + pyannote
 USER root
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir \
@@ -117,7 +117,13 @@ RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir \
       numba==0.61.2 \
       tiktoken==0.9.0 \
-      git+https://github.com/openai/whisper.git@v20250625
+      git+https://github.com/openai/whisper.git@v20250625 \
+      pyannote.audio==2.1.1 \
+      transformers==4.41.2 \
+      librosa==0.10.2.post1 \
+      torchmetrics==1.3.2 \
+      scikit-learn==1.4.2 \
+      pandas==2.2.2
 
 # 9b) Patch Whisper: increase segment_duration chunks from 30s to 180s
 RUN sed -i 's/segment_duration = 30\.0/segment_duration = 180.0/' \
