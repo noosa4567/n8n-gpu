@@ -92,19 +92,16 @@ RUN cp "$PUPPETEER_CACHE_DIR"/chrome/linux-*/chrome-linux*/chrome_sandbox \
     chmod 4755           /usr/local/sbin/chrome-devel-sandbox
 ENV CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
 
-#── 8) Chrome “warm-up” (root, dynamic lookup of Puppeteer install path)
-RUN node -e "const { execSync } = require('child_process'); \
-const path = require('path'); \
-const npmRoot = execSync('npm root -g').toString().trim(); \
-const p = require(path.join(npmRoot, 'puppeteer')); \
-(async ()=>{ \
-  const b = await p.launch({ \
+#── 8) Chrome “warm-up” using Puppeteer's top-level launcher
+RUN node -e "const puppeteer = require('puppeteer'); \
+(async () => { \
+  const browser = await puppeteer.launch({ \
     headless: true, \
     args: ['--no-sandbox','--disable-setuid-sandbox'] \
   }); \
-  const pg = await b.newPage(); \
-  await pg.goto('about:blank', { timeout: 60000 }); \
-  await b.close(); \
+  const page = await browser.newPage(); \
+  await page.goto('about:blank', { timeout: 60000 }); \
+  await browser.close(); \
 })();"
 
 #── 9) Install Torch/CUDA wheels + Whisper (as root)
