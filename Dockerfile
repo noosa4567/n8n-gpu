@@ -120,15 +120,15 @@ RUN python3.10 -m pip install --upgrade pip && \
       tiktoken==0.9.0 \
       git+https://github.com/openai/whisper.git@v20250625
 
-#── 10) Pre-download official Whisper medium.en model using Whisper's own internal downloader
+#── 10) Pre-download official Whisper medium.en model using Whisper's internal downloader
 RUN python3.10 -c "\
 import whisper, os; \
 whisper._download(whisper._MODELS['medium.en'], os.path.expanduser('~/.cache/whisper'), in_memory=False)"
 
-#── 11) Ensure whisper model cache is owned by node user
-RUN mkdir -p /home/node/.cache/whisper && \
-    cp -f /root/.cache/whisper/medium.en.pt /home/node/.cache/whisper/medium.en.pt && \
-    chown -R node:node /home/node/.cache/whisper
+#── 11) Symlink the entire Whisper cache to the node user
+RUN mkdir -p /home/node/.cache && \
+    ln -s /root/.cache/whisper /home/node/.cache/whisper && \
+    chown -h node:node /home/node/.cache/whisper
 
 #── 12) Sanity-check: CUDA hwaccels visible
 RUN ffmpeg -hide_banner -hwaccels | grep -q cuda
