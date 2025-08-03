@@ -123,7 +123,7 @@ RUN python3.10 -m pip install --upgrade pip && \
 #── 10) Pre-download official Whisper medium.en model using Whisper's own internal downloader
 RUN python3.10 -c "\
 import whisper, os; \
-whisper._download(whisper._MODELS['medium.en'], os.path.expanduser('~/.cache/whisper'))"
+whisper._download(whisper._MODELS['medium.en'], os.path.expanduser('~/.cache/whisper'), in_memory=False)"
 
 #── 11) Ensure whisper model cache is owned by node user
 RUN mkdir -p /home/node/.cache/whisper && \
