@@ -126,8 +126,8 @@ RUN python3.10 -m pip install --upgrade pip && \
       pandas==2.2.2
 
 # 9b) Patch Whisper: increase segment_duration chunks from 30s to 180s
-RUN sed -i 's/segment_duration = 30\.0/segment_duration = 180.0/' \
-    /usr/local/lib/python3.10/dist-packages/whisper/transcribe.py
+#RUN sed -i 's/segment_duration = 30\.0/segment_duration = 180.0/' \
+#    /usr/local/lib/python3.10/dist-packages/whisper/transcribe.py
 
 # 10) Pre-download official Whisper medium.en model using Whisper's internal downloader
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
