@@ -124,19 +124,17 @@ RUN python3.10 -m pip install --upgrade pip && \
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
     python3.10 -c "\
 import os, torch, hashlib, json, whisper; \
-out=os.environ['WHISPER_MODEL_PATH']; \
-# load the full English-only Medium in FP32 on CPU and save its weights \
+out = os.environ['WHISPER_MODEL_PATH']; \
+model_path = os.path.join(out, 'medium.en.pt'); \
 m = whisper.load_model('medium.en', device='cpu'); \
-pt = os.path.join(out, 'medium.en.pt'); \
-torch.save(m.state_dict(), pt); \
-h = hashlib.sha256(open(pt, 'rb').read()).hexdigest()[:20]; \
-json.dump({'sha256': h}, open(pt + '.json','w'));\
-"
+torch.save(m, model_path); \
+h = hashlib.sha256(open(model_path, 'rb').read()).hexdigest()[:20]; \
+json.dump({'sha256': h}, open(model_path + '.json', 'w'));"
 
-#── 11) Whisper cache symlink
-RUN mkdir -p /home/node/.cache && \
-    ln -s /usr/local/lib/whisper_models /home/node/.cache/whisper && \
-    chown -h node:node /home/node/.cache/whisper
+#── 11) Whisper cache symlink for runtime access
+RUN mkdir -p /home/node/.cache/whisper && \
+    ln -sf /usr/local/lib/whisper_models/medium.en.pt /home/node/.cache/whisper/medium.en.pt && \
+    chown -h node:node /home/node/.cache/whisper/medium.en.pt
 
 #── 12) Sanity-check: CUDA hwaccels visible
 RUN ffmpeg -hide_banner -hwaccels | grep -q cuda
