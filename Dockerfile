@@ -120,21 +120,15 @@ RUN python3.10 -m pip install --upgrade pip && \
       tiktoken==0.9.0 \
       git+https://github.com/openai/whisper.git@v20250625
 
-#── 10) Pre-download **full English-only Medium** (FP32 on CPU at build time)
-RUN mkdir -p "$WHISPER_MODEL_PATH" && \
-    python3.10 -c "\
-import os, torch, hashlib, json, whisper; \
-out = os.environ['WHISPER_MODEL_PATH']; \
-model_path = os.path.join(out, 'medium.en.pt'); \
-m = whisper.load_model('medium.en', device='cpu'); \
-torch.save(m, model_path); \
-h = hashlib.sha256(open(model_path, 'rb').read()).hexdigest()[:20]; \
-json.dump({'sha256': h}, open(model_path + '.json', 'w'));"
+#── 10) Pre-download official Whisper medium.en model using Whisper's own internal downloader
+RUN python3.10 -c "\
+import whisper, os; \
+whisper._download(whisper._MODELS['medium.en'], os.path.expanduser('~/.cache/whisper'))"
 
-#── 11) Whisper cache symlink for runtime access
+#── 11) Ensure whisper model cache is owned by node user
 RUN mkdir -p /home/node/.cache/whisper && \
-    ln -sf /usr/local/lib/whisper_models/medium.en.pt /home/node/.cache/whisper/medium.en.pt && \
-    chown -h node:node /home/node/.cache/whisper/medium.en.pt
+    cp -f /root/.cache/whisper/medium.en.pt /home/node/.cache/whisper/medium.en.pt && \
+    chown -R node:node /home/node/.cache/whisper
 
 #── 12) Sanity-check: CUDA hwaccels visible
 RUN ffmpeg -hide_banner -hwaccels | grep -q cuda
