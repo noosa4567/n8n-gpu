@@ -119,7 +119,7 @@ RUN python3.10 -m pip install --upgrade pip && \
       tiktoken==0.9.0 \
       git+https://github.com/openai/whisper.git@v20250625 \
       pyannote.audio==2.1.1 \
-      soundfile<0.11,>=0.10.2 \
+      "soundfile>=0.10.2,<0.11" \
       transformers==4.41.2 \
       librosa==0.9.2 \
       scikit-learn==1.4.2 \
