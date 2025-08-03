@@ -3,14 +3,11 @@
 # Stage 1 ─ pull a proven, GPU-accelerated FFmpeg (dynamic, CUDA 12.0)
 ###############################################################################
 FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
-
 ###############################################################################
 # Stage 2 ─ runtime: CUDA 12.1-devel – n8n + Chrome + Torch/Whisper (medium.en)
 ###############################################################################
 FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
-
 ARG DEBIAN_FRONTEND=noninteractive
-
 ENV HOME=/home/node \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
@@ -22,7 +19,6 @@ ENV HOME=/home/node \
     NODE_PATH=/usr/local/lib/node_modules \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
-
 #── 1) Base OS libs + Google Chrome
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -40,35 +36,29 @@ RUN apt-get update && \
     apt-get update && \
     apt-get install -y --no-install-recommends google-chrome-stable && \
     rm -rf /var/lib/apt/lists/*
-
 #── 2) Legacy NVENC soname symlinks
-RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0   /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2       /usr/lib/x86_64-linux-gnu/libva.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2   /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
-    ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2   /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
+RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0 /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2 /usr/lib/x86_64-linux-gnu/libva.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2 /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
+    ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2 /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
-
 #── 3) Strip NVIDIA GBM stubs (fixes headless Chrome <115)
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
            /usr/local/nvidia/lib*/*gbm* \
            /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
-
 #── 4) Create non-root “node” user
 RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" "$PUPPETEER_CACHE_DIR" && \
     chown -R node:node "$HOME"
-
 #── 4b) Ensure Puppeteer’s config dir is writable by node
 RUN mkdir -p /home/node/.config/puppeteer && \
     chown -R node:node /home/node/.config
-
 #── 5) Copy FFmpeg + its libs, then update linker cache
-COPY --from=ffmpeg /usr/local/bin/ffmpeg  /usr/local/bin/ffmpeg
+COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
-COPY --from=ffmpeg /usr/local/lib/*.so.*    /usr/local/lib/
+COPY --from=ffmpeg /usr/local/lib/*.so.* /usr/local/lib/
 RUN ldconfig
-
 #── 6) Install Node 20, n8n & Puppeteer globally
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get update && \
@@ -80,18 +70,15 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     npm cache clean --force && \
     mkdir -p /home/node/.npm && chown -R node:node /home/node/.npm && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
-
 #── 7) Puppeteer’s Chromium + restore sandbox
 USER node
 RUN npx puppeteer@24.15.0 browsers install chrome
-
 USER root
 RUN cp "$PUPPETEER_CACHE_DIR"/chrome/linux-*/chrome-linux*/chrome_sandbox \
         /usr/local/sbin/chrome-devel-sandbox && \
-    chown root:root      /usr/local/sbin/chrome-devel-sandbox && \
-    chmod 4755           /usr/local/sbin/chrome-devel-sandbox
+    chown root:root /usr/local/sbin/chrome-devel-sandbox && \
+    chmod 4755 /usr/local/sbin/chrome-devel-sandbox
 ENV CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
-
 #── 8) Chrome “warm-up” using dynamic path lookup of Puppeteer global install
 RUN node -e "const { execSync } = require('child_process'); \
 const path = require('path'); \
@@ -106,7 +93,6 @@ const puppeteer = require(path.join(npmRoot, 'puppeteer')); \
   await page.goto('about:blank', { timeout: 60000 }); \
   await browser.close(); \
 })();"
-
 #── 9) Install Torch/CUDA wheels + Whisper (as root)
 USER root
 RUN python3.10 -m pip install --upgrade pip && \
@@ -119,31 +105,40 @@ RUN python3.10 -m pip install --upgrade pip && \
       numba==0.61.2 \
       tiktoken==0.9.0 \
       git+https://github.com/openai/whisper.git@v20250625
-
 #── 10) Pre-download official Whisper medium.en model using Whisper's internal downloader
-RUN python3.10 -c "\
+RUN mkdir -p "$WHISPER_MODEL_PATH" && \
+    python3.10 -c "\
 import whisper, os; \
-whisper._download(whisper._MODELS['medium.en'], os.path.expanduser('~/.cache/whisper'), in_memory=False)"
-
+whisper._download(whisper._MODELS['medium.en'], os.environ['WHISPER_MODEL_PATH'], in_memory=False)"
 #── 11) Symlink the entire Whisper cache to the node user
 RUN mkdir -p /home/node/.cache && \
-    ln -s /root/.cache/whisper /home/node/.cache/whisper && \
+    ln -s "$WHISPER_MODEL_PATH" /home/node/.cache/whisper && \
     chown -h node:node /home/node/.cache/whisper
-
 #── 12) Sanity-check: CUDA hwaccels visible
 RUN ffmpeg -hide_banner -hwaccels | grep -q cuda
-
 #── 13) Tiny PATH-shim so /usr/local/bin comes first
 RUN printf '%s\n' \
       '#!/bin/sh' \
       'export PATH=/usr/local/bin:$PATH' \
+      '# Warm up Chrome at container startup (as node user, with GPU access)' \
+      'node -e "const { execSync } = require('\''child_process'\'');' \
+      'const path = require('\''path'\'');' \
+      'const npmRoot = execSync('\''npm root -g'\'').toString().trim();' \
+      'const puppeteer = require(path.join(npmRoot, '\''puppeteer'\''));' \
+      '(async () => {' \
+      '  const browser = await puppeteer.launch({' \
+      '    headless: true,' \
+      '    args: ['\''--no-sandbox'\'','\''--disable-setuid-sandbox'\'']' \
+      '  });' \
+      '  const page = await browser.newPage();' \
+      '  await page.goto('\''about:blank'\'', { timeout: 60000 });' \
+      '  await browser.close();' \
+      '})();"' \
       'exec "$@"' \
     > /usr/local/bin/n8n-wrapper && chmod +x /usr/local/bin/n8n-wrapper
-
 #── 14) Health-check & final entrypoint
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
-
 # Drop to node for runtime
 USER node
 WORKDIR "$HOME"
