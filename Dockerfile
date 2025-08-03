@@ -121,7 +121,6 @@ RUN python3.10 -m pip install --upgrade pip && \
       pyannote.audio==2.1.1 \
       transformers==4.41.2 \
       librosa==0.10.2.post1 \
-      torchmetrics==1.3.2 \
       scikit-learn==1.4.2 \
       pandas==2.2.2
 
