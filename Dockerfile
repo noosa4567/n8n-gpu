@@ -91,9 +91,9 @@ RUN cp "$PUPPETEER_CACHE_DIR"/chrome/linux-*/chrome-linux*/chrome_sandbox \
     chmod 4755 /usr/local/sbin/chrome-devel-sandbox
 ENV CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
 
-# 8) (FIXED) Chrome warm-up using exact path to Puppeteer's Chromium
+# 8) (FIXED) Chrome warm-up using exact path to Puppeteer's Chromium inside n8n's node_modules
 RUN node -e "(async () => { \
-  const puppeteer = require('puppeteer'); \
+  const puppeteer = require('/usr/local/lib/node_modules/n8n/node_modules/puppeteer'); \
   const browser = await puppeteer.launch({ \
     headless: 'new', \
     executablePath: puppeteer.executablePath(), \
