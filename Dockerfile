@@ -119,6 +119,10 @@ RUN python3.10 -m pip install --upgrade pip && \
       tiktoken==0.9.0 \
       git+https://github.com/openai/whisper.git@v20250625
 
+# 9b) Patch Whisper: increase segment_duration chunks from 30s to 180s
+RUN sed -i 's/segment_duration = 30\.0/segment_duration = 180.0/' \
+    /usr/local/lib/python3.10/dist-packages/whisper/transcribe.py
+
 # 10) Pre-download official Whisper medium.en model using Whisper's internal downloader
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
     python3.10 -c "import whisper, os; whisper._download(whisper._MODELS['medium.en'], os.environ['WHISPER_MODEL_PATH'], in_memory=False)"
