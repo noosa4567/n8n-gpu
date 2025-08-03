@@ -92,8 +92,11 @@ RUN cp "$PUPPETEER_CACHE_DIR"/chrome/linux-*/chrome-linux*/chrome_sandbox \
     chmod 4755           /usr/local/sbin/chrome-devel-sandbox
 ENV CHROME_DEVEL_SANDBOX=/usr/local/sbin/chrome-devel-sandbox
 
-#── 8) Chrome “warm-up” using Puppeteer's top-level launcher
-RUN node -e "const puppeteer = require('puppeteer'); \
+#── 8) Chrome “warm-up” using dynamic path lookup of Puppeteer global install
+RUN node -e "const { execSync } = require('child_process'); \
+const path = require('path'); \
+const npmRoot = execSync('npm root -g').toString().trim(); \
+const puppeteer = require(path.join(npmRoot, 'puppeteer')); \
 (async () => { \
   const browser = await puppeteer.launch({ \
     headless: true, \
