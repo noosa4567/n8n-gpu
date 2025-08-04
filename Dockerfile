@@ -109,6 +109,7 @@ RUN npx puppeteer@24.15.0 node -e "\
 # 9) Install Torch/CUDA wheels + Whisper + pyannote.audio (with compatible deps)
 USER root
 RUN python3.10 -m pip install --upgrade pip && \
+    python3.10 -m pip install --no-cache-dir "numpy<2" && \
     python3.10 -m pip install --no-cache-dir \
       torch==2.3.1+cu121 \
       torchvision==0.18.1+cu121 \
