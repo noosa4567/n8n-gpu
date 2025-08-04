@@ -124,7 +124,7 @@ RUN python3.10 -m pip install --upgrade pip && \
       librosa==0.9.2 \
       scikit-learn==1.4.2 \
       pandas==2.2.2 \
-      noisereduce==3.0.4
+      noisereduce==3.0.3
 
 # 9b) Patch Whisper: increase segment_duration chunks from 30s to 180s
 RUN sed -i 's/segment_duration = 30\.0/segment_duration = 180.0/' \
