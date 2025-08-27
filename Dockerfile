@@ -33,7 +33,10 @@ RUN apt-get update && \
       libxcomposite1 libxrandr2 libxdamage1 libx11-xcb1 libva2 \
       libva-x11-2 libva-drm2 libva-wayland2 libvdpau1 libsndio7.0 \
       libsdl2-2.0-0 fonts-liberation lsb-release xdg-utils libfreetype6 \
-      libatspi2.0-0 libgcc1 libstdc++6 && \
+      libatspi2.0-0 libgcc1 libstdc++6 \
+      poppler-utils poppler-data \
+      ghostscript \
+      fontconfig fonts-dejavu-core && \
     curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | apt-key add - && \
     echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
       > /etc/apt/sources.list.d/google-chrome.list && \
