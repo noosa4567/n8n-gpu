@@ -5,19 +5,15 @@
 FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 
 ###############################################################################
-# Stage 2 ── runtime: CUDA 12.1-devel – n8n + Puppeteer(Core) + Torch/Whisper
+# Stage 2 ── runtime: CUDA 12.1-devel – n8n + Torch/Whisper (sidecar Chrome)
 ###############################################################################
 FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# IMPORTANT: no backslashes in ENV; sidecar-only puppeteer config
 ENV HOME=/home/node \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
-    PUPPETEER_SKIP_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH= \
-    PUPPETEER_BROWSER_WS_ENDPOINT= \
     LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64 \
     TZ=Australia/Brisbane \
     PIP_ROOT_USER_ACTION=ignore \
@@ -26,7 +22,7 @@ ENV HOME=/home/node \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
 
-# 1) Base OS libs (kept your set; removed Google Chrome repo/install)
+# 1) Base OS libs (unchanged set; Chrome removed)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       software-properties-common ca-certificates curl git wget gnupg tini \
@@ -39,8 +35,7 @@ RUN apt-get update && \
       libatspi2.0-0 libgcc1 libstdc++6 \
       poppler-utils poppler-data \
       ghostscript \
-      fontconfig fonts-dejavu-core \
-      unzip jq rsync procps && \
+      fontconfig fonts-dejavu-core && \
     rm -rf /var/lib/apt/lists/*
 
 # 2) Legacy NVENC soname symlinks (unchanged)
@@ -50,7 +45,7 @@ RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0 /usr/lib/x86_64-linux-gnu/l
     ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2 /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
 
-# 3) Strip NVIDIA GBM stubs (kept)
+# 3) Strip NVIDIA GBM stubs (unchanged)
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
            /usr/local/nvidia/lib*/*gbm* \
            /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
@@ -71,24 +66,23 @@ COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
 COPY --from=ffmpeg /usr/local/lib/*.so.* /usr/local/lib/
 RUN ldconfig
 
-# 6) Install Node 20, n8n & Puppeteer stack (switch to puppeteer-core + extras)
+# 6) Install Node 20 (NodeSource), n8n & Puppeteer-Core globally (versions unchanged)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get update && \
     apt-get install -y --no-install-recommends nodejs && \
     npm install -g --unsafe-perm \
       n8n@1.104.2 \
       puppeteer-core@24.15.0 \
-      n8n-nodes-puppeteer@1.4.1 \
-      puppeteer-extra@3.3.6 \
-      puppeteer-extra-plugin-stealth@2.11.2 && \
+      n8n-nodes-puppeteer@1.4.1 && \
     npm cache clean --force && \
     mkdir -p /home/node/.npm && chown -R node:node /home/node/.npm && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# 7) (REMOVED) Local Chrome download/sandbox/warm-up
-#    Sidecar-only: no chrome present in this image by design.
+# (REMOVED) 7) Local Chromium download & SUID sandbox — not needed with sidecar
+# (REMOVED) 8) Chrome warm-up — not needed with sidecar
 
-# 8) Install Torch/CUDA wheels + Whisper + pyannote.audio (+ your pinned libs)
+# 9) Torch/CUDA + Whisper + pyannote/audio (unchanged)
+USER root
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir "numpy<2" && \
     python3.10 -m pip install --no-cache-dir \
@@ -108,30 +102,30 @@ RUN python3.10 -m pip install --upgrade pip && \
       pandas==2.2.2 \
       noisereduce==3.0.3
 
-# 9) Patch Whisper: increase segment_duration chunks from 30s to 180s (kept)
+# 9b) Whisper segment_duration patch (unchanged)
 RUN sed -i 's/segment_duration = 30\.0/segment_duration = 180.0/' \
     /usr/local/lib/python3.10/dist-packages/whisper/transcribe.py
 
-# 10) Pre-download Whisper medium.en model (kept)
+# 10) Pre-download Whisper medium.en (unchanged)
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
     python3.10 -c "import whisper, os; whisper._download(whisper._MODELS['medium.en'], os.environ['WHISPER_MODEL_PATH'], in_memory=False)"
 
-# 11) Symlink the Whisper cache to the node user (kept)
+# 11) Symlink Whisper cache to node (unchanged)
 RUN mkdir -p /home/node/.cache && \
     ln -s "$WHISPER_MODEL_PATH" /home/node/.cache/whisper && \
     chown -h node:node /home/node/.cache/whisper
 
-# 12) Sanity-check: CUDA hwaccels visible (kept)
+# 12) Sanity-check: CUDA hwaccels visible (unchanged)
 RUN ffmpeg -hide_banner -hwaccels | grep -q cuda
 
-# 13) Tiny PATH shim and entry (kept)
+# 13) PATH shim (unchanged)
 RUN printf '%s\n' \
       '#!/bin/sh' \
       'export PATH=/usr/local/bin:$PATH' \
       'exec "$@"' \
     > /usr/local/bin/n8n-wrapper && chmod +x /usr/local/bin/n8n-wrapper
 
-# 14) Health-check & final entrypoint (kept)
+# 14) Health-check & final entrypoint (unchanged)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
 
