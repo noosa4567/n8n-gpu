@@ -1,11 +1,12 @@
 # syntax=docker/dockerfile:1
+
 ###############################################################################
 # Stage 1 ── pull a proven, GPU-accelerated FFmpeg (dynamic, CUDA 12.0)
 ###############################################################################
 FROM jrottenberg/ffmpeg:5.1-nvidia AS ffmpeg
 
 ###############################################################################
-# Stage 2 ── runtime: CUDA 12.1-devel – n8n + Torch/Whisper (sidecar Chrome)
+# Stage 2 ── runtime: CUDA 12.1-devel – n8n + Puppeteer (sidecar) + Torch/Whisper
 ###############################################################################
 FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 
@@ -14,7 +15,6 @@ ARG DEBIAN_FRONTEND=noninteractive
 ENV HOME=/home/node \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
-    LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64 \
     TZ=Australia/Brisbane \
     PIP_ROOT_USER_ACTION=ignore \
     PATH=/usr/local/bin:$PATH \
@@ -22,7 +22,7 @@ ENV HOME=/home/node \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
 
-# 1) Base OS libs (unchanged set; Chrome removed)
+# 1) Base OS libs (no local Chrome here; sidecar provides the browser)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       software-properties-common ca-certificates curl git wget gnupg tini \
@@ -32,57 +32,59 @@ RUN apt-get update && \
       libxcomposite1 libxrandr2 libxdamage1 libx11-xcb1 libva2 \
       libva-x11-2 libva-drm2 libva-wayland2 libvdpau1 libsndio7.0 \
       libsdl2-2.0-0 fonts-liberation lsb-release xdg-utils libfreetype6 \
-      libatspi2.0-0 libgcc1 libstdc++6 \
+      libatspi2.0-0 libgcc-s1 libstdc++6 \
       poppler-utils poppler-data \
       ghostscript \
       fontconfig fonts-dejavu-core && \
     rm -rf /var/lib/apt/lists/*
 
-# 2) Legacy NVENC soname symlinks (unchanged)
+# 2) Legacy NVENC soname symlinks (match your working image behaviour)
 RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0 /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2 /usr/lib/x86_64-linux-gnu/libva.so.1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libva-drm.so.2 /usr/lib/x86_64-linux-gnu/libva-drm.so.1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libva-x11.so.2 /usr/lib/x86_64-linux-gnu/libva-x11.so.1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libva-wayland.so.2 /usr/lib/x86_64-linux-gnu/libva-wayland.so.1
 
-# 3) Strip NVIDIA GBM stubs (unchanged)
+# 3) Strip NVIDIA GBM stubs (kept from your working base)
 RUN rm -rf /usr/share/egl/egl_external_platform.d/*nvidia* \
            /usr/local/nvidia/lib*/*gbm* \
            /usr/lib/x86_64-linux-gnu/*nvidia*gbm*
 
-# 4) Create non-root “node” user (unchanged)
+# 4) Create non-root “node” user and writable caches
 RUN groupadd -r node && \
     useradd -r -g node -G video -u 999 -m -d "$HOME" -s /bin/bash node && \
     mkdir -p "$HOME/.n8n" "$PUPPETEER_CACHE_DIR" && \
     chown -R node:node "$HOME"
 
-# 4b) Ensure Puppeteer’s config dir is writable by node (unchanged)
+# 4b) Ensure Puppeteer config dir exists
 RUN mkdir -p /home/node/.config/puppeteer && \
     chown -R node:node /home/node/.config
 
-# 5) Copy FFmpeg + its libs, then update linker cache (unchanged)
+# 5) Copy FFmpeg + libs from stage, then ldconfig
 COPY --from=ffmpeg /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
 COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
 COPY --from=ffmpeg /usr/local/lib/*.so.* /usr/local/lib/
 RUN ldconfig
 
-# 6) Install Node 20 (NodeSource), n8n & Puppeteer-Core globally (versions unchanged)
+# 6) Install Node 20, n8n & Puppeteer libs (skip Chromium download)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
     apt-get update && \
     apt-get install -y --no-install-recommends nodejs && \
+    npm config set puppeteer_skip_download true && \
     npm install -g --unsafe-perm \
       n8n@1.104.2 \
+      puppeteer@24.15.0 \
       puppeteer-core@24.15.0 \
-      n8n-nodes-puppeteer@1.4.1 && \
+      n8n-nodes-puppeteer@1.4.1 \
+      puppeteer-extra@3.3.6 \
+      puppeteer-extra-plugin-stealth@2.11.2 && \
     npm cache clean --force && \
     mkdir -p /home/node/.npm && chown -R node:node /home/node/.npm && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# (REMOVED) 7) Local Chromium download & SUID sandbox — not needed with sidecar
-# (REMOVED) 8) Chrome warm-up — not needed with sidecar
+# 7) (REMOVED) Local Chrome install/sandbox/warm-up – sidecar provides the browser
 
-# 9) Torch/CUDA + Whisper + pyannote/audio (unchanged)
-USER root
+# 8) Install Torch/CUDA wheels + Whisper + pyannote.audio (unchanged)
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir "numpy<2" && \
     python3.10 -m pip install --no-cache-dir \
@@ -102,30 +104,30 @@ RUN python3.10 -m pip install --upgrade pip && \
       pandas==2.2.2 \
       noisereduce==3.0.3
 
-# 9b) Whisper segment_duration patch (unchanged)
+# 8b) Patch Whisper: increase segment_duration to 180s (unchanged)
 RUN sed -i 's/segment_duration = 30\.0/segment_duration = 180.0/' \
     /usr/local/lib/python3.10/dist-packages/whisper/transcribe.py
 
-# 10) Pre-download Whisper medium.en (unchanged)
+# 9) Pre-download Whisper medium.en model (unchanged)
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
     python3.10 -c "import whisper, os; whisper._download(whisper._MODELS['medium.en'], os.environ['WHISPER_MODEL_PATH'], in_memory=False)"
 
-# 11) Symlink Whisper cache to node (unchanged)
+# 9b) Symlink Whisper cache for node user (unchanged)
 RUN mkdir -p /home/node/.cache && \
     ln -s "$WHISPER_MODEL_PATH" /home/node/.cache/whisper && \
     chown -h node:node /home/node/.cache/whisper
 
-# 12) Sanity-check: CUDA hwaccels visible (unchanged)
+# 10) Sanity-check: CUDA hwaccels visible (unchanged)
 RUN ffmpeg -hide_banner -hwaccels | grep -q cuda
 
-# 13) PATH shim (unchanged)
+# 11) Tiny PATH shim (unchanged)
 RUN printf '%s\n' \
       '#!/bin/sh' \
       'export PATH=/usr/local/bin:$PATH' \
       'exec "$@"' \
     > /usr/local/bin/n8n-wrapper && chmod +x /usr/local/bin/n8n-wrapper
 
-# 14) Health-check & final entrypoint (unchanged)
+# 12) Health-check & final entrypoint (unchanged)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
 
