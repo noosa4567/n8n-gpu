@@ -112,7 +112,7 @@ RUN python3.10 -m pip install --upgrade pip && \
       numba==0.61.2 \
       tiktoken==0.9.0 \
       git+https://github.com/openai/whisper.git@v20250625 \
-      pyannote.audio>=3.1,<3.2 \
+      "pyannote.audio>=3.1,<3.2" \
       soundfile==0.12.1 \
       transformers==4.41.2 \
       librosa==0.10.2.post1 \
