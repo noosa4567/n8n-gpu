@@ -12,8 +12,8 @@ FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 ARG DEBIAN_FRONTEND=noninteractive
 
 # NOTE:
-# - Removed PUPPETEER_EXECUTABLE_PATH and any local Chrome sandbox vars
-# - Added PUPPETEER_SKIP_DOWNLOAD to prevent Chromium download when installing puppeteer
+# - We rely on a Chrome *sidecar* container. We do not install Chrome here.
+# - Prevent puppeteer from downloading Chromium in this image.
 ENV HOME=/home/node \
     WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
     PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
@@ -26,8 +26,7 @@ ENV HOME=/home/node \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
 
-# 1) Base OS libs (unchanged list)
-#    + hardened apt mirrors & retries (no package changes)
+# 1) Base OS libs (unchanged)
 RUN set -eux; \
     sed -i 's|http://archive.ubuntu.com/ubuntu|mirror://mirrors.ubuntu.com/mirrors.txt|g' /etc/apt/sources.list; \
     apt-get update -o Acquire::Retries=5; \
@@ -57,8 +56,6 @@ RUN set -eux; \
       fontconfig fonts-dejavu-core); \
     rm -rf /var/lib/apt/lists/*
 
-# (REMOVED) Google Chrome apt repo & installation — sidecar will supply Chrome
-
 # 2) Legacy NVENC soname symlinks (unchanged)
 RUN ln -sf /usr/lib/x86_64-linux-gnu/libsndio.so.7.0 /usr/lib/x86_64-linux-gnu/libsndio.so.6.1 && \
     ln -sf /usr/lib/x86_64-linux-gnu/libva.so.2             /usr/lib/x86_64-linux-gnu/libva.so.1 && \
@@ -87,9 +84,7 @@ COPY --from=ffmpeg /usr/local/bin/ffprobe /usr/local/bin/ffprobe
 COPY --from=ffmpeg /usr/local/lib/*.so.* /usr/local/lib/
 RUN ldconfig
 
-# 6) Install Node 20, n8n & Puppeteer globally (versions unchanged)
-#    KEEP "puppeteer@24.15.0" (library only) so n8n-nodes-puppeteer resolves `require('puppeteer')`
-#    but DO NOT download Chromium (PUPPETEER_SKIP_DOWNLOAD=1 above).
+# 6) Install Node 20, n8n & Puppeteer globally (unchanged)
 RUN set -eux; \
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -; \
     apt-get update -o Acquire::Retries=5; \
@@ -103,10 +98,7 @@ RUN set -eux; \
     mkdir -p /home/node/.npm && chown -R node:node /home/node/.npm; \
     apt-get clean; rm -rf /var/lib/apt/lists/*
 
-# (REMOVED) Section that downloaded Chrome via puppeteer and SUID sandbox
-# (REMOVED) Warm-up run — warming will be handled by the Chrome sidecar container
-
-# 9) Torch/CUDA wheels + Whisper + pyannote (pin change ONLY on pyannote)
+# 7) Torch/CUDA wheels + Whisper + Pyannote (ONLY librosa pin changed)
 USER root
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir "numpy<2" && \
@@ -122,35 +114,35 @@ RUN python3.10 -m pip install --upgrade pip && \
       pyannote.audio>=3.1,<3.2 \
       "soundfile>=0.10.2,<0.11" \
       transformers==4.41.2 \
-      librosa==0.9.2 \
+      librosa==0.10.2.post1 \
       scikit-learn==1.4.2 \
       pandas==2.2.2 \
       noisereduce==3.0.3
 
-# 9b) Whisper patch (unchanged)
+# 8) Whisper patch (unchanged)
 RUN sed -i 's/segment_duration = 30\.0/segment_duration = 180.0/' \
     /usr/local/lib/python3.10/dist-packages/whisper/transcribe.py
 
-# 10) Pre-download Whisper model (unchanged)
+# 9) Pre-download Whisper model (unchanged)
 RUN mkdir -p "$WHISPER_MODEL_PATH" && \
     python3.10 -c "import whisper, os; whisper._download(whisper._MODELS['medium.en'], os.environ['WHISPER_MODEL_PATH'], in_memory=False)"
 
-# 11) Symlink Whisper cache for node user (unchanged)
+# 10) Symlink Whisper cache for node user (unchanged)
 RUN mkdir -p /home/node/.cache && \
     ln -s "$WHISPER_MODEL_PATH" /home/node/.cache/whisper && \
     chown -h node:node /home/node/.cache/whisper
 
-# 12) CUDA hwaccels check (unchanged)
+# 11) CUDA hwaccels check (unchanged)
 RUN ffmpeg -hide_banner -hwaccels | grep -q cuda
 
-# 13) Tiny PATH shim (unchanged)
+# 12) Tiny PATH shim (unchanged)
 RUN printf '%s\n' \
       '#!/bin/sh' \
       'export PATH=/usr/local/bin:$PATH' \
       'exec "$@"' \
     > /usr/local/bin/n8n-wrapper && chmod +x /usr/local/bin/n8n-wrapper
 
-# 14) Health-check & entrypoint (unchanged)
+# 13) Health-check & entrypoint (unchanged)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl --fail http://localhost:5678/healthz || exit 1
 
