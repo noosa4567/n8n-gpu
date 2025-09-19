@@ -106,7 +106,7 @@ RUN set -eux; \
 # (REMOVED) Section that downloaded Chrome via puppeteer and SUID sandbox
 # (REMOVED) Warm-up run — warming will be handled by the Chrome sidecar container
 
-# 9) Torch/CUDA wheels + Whisper + pyannote (unchanged pins)
+# 9) Torch/CUDA wheels + Whisper + pyannote (pin change ONLY on pyannote)
 USER root
 RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir "numpy<2" && \
@@ -119,7 +119,7 @@ RUN python3.10 -m pip install --upgrade pip && \
       numba==0.61.2 \
       tiktoken==0.9.0 \
       git+https://github.com/openai/whisper.git@v20250625 \
-      pyannote.audio==2.1.1 \
+      pyannote.audio>=3.1,<3.2 \
       "soundfile>=0.10.2,<0.11" \
       transformers==4.41.2 \
       librosa==0.9.2 \
