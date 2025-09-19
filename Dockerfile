@@ -12,18 +12,19 @@ FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Environment configuration
-ENV HOME=/home/node \
-    WHISPER_MODEL_PATH=/usr/local/lib/whisper_models \
-    PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer \
-    PUPPETEER_SKIP_DOWNLOAD=1 \        # skip Chromium download, using sidecar
-    LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64 \
-    TZ=Australia/Brisbane \
-    PIP_ROOT_USER_ACTION=ignore \
-    PATH=/usr/local/bin:$PATH \
-    NODE_PATH=/usr/local/lib/node_modules \
-    NVIDIA_VISIBLE_DEVICES=all \
-    NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+# Environment configuration (split into individual ENV lines to avoid parsing issues)
+ENV HOME=/home/node
+ENV WHISPER_MODEL_PATH=/usr/local/lib/whisper_models
+ENV PUPPETEER_CACHE_DIR=/home/node/.cache/puppeteer
+# We rely on a Chrome sidecar; prevent Chromium download during npm install
+ENV PUPPETEER_SKIP_DOWNLOAD=1
+ENV LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:/usr/local/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+ENV TZ=Australia/Brisbane
+ENV PIP_ROOT_USER_ACTION=ignore
+ENV PATH=/usr/local/bin:$PATH
+ENV NODE_PATH=/usr/local/lib/node_modules
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
 
 # 1) Install base OS libraries (including Chrome deps for Puppeteer)
 RUN set -eux; \
@@ -113,9 +114,9 @@ RUN python3.10 -m pip install --upgrade pip && \
       tiktoken==0.9.0 \
       git+https://github.com/openai/whisper.git@v20250625 \
       pyannote.audio>=3.1,<3.2 \
-      "soundfile>=0.10.2,<0.11" \
+      soundfile==0.12.1 \
       transformers==4.41.2 \
-      librosa==0.9.2 \
+      librosa==0.10.2.post1 \
       scikit-learn==1.4.2 \
       pandas==2.2.2 \
       noisereduce==3.0.3
