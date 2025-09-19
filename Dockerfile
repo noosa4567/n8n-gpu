@@ -102,7 +102,7 @@ RUN set -eux; \
 
 # 9) Install PyTorch (CUDA 12.1) and Python ML dependencies
 USER root
-RUN python3.10 -m pip install --upgrade pip setuptools wheel && \
+RUN python3.10 -m pip install --upgrade pip && \
     python3.10 -m pip install --no-cache-dir "numpy<2" && \
     python3.10 -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
       torch==2.3.1+cu121 \
