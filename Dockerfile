@@ -104,11 +104,10 @@ RUN set -eux; \
 USER root
 RUN python3.10 -m pip install --upgrade pip setuptools wheel && \
     python3.10 -m pip install --no-cache-dir "numpy<2" && \
-    python3.10 -m pip install --no-cache-dir \
+    python3.10 -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
       torch==2.3.1+cu121 \
       torchvision==0.18.1+cu121 \
-      torchaudio==2.3.1+cu121 \
-      --index-url https://download.pytorch.org/whl/cu121 && \
+      torchaudio==2.3.1+cu121 && \
     python3.10 -m pip install --no-cache-dir \
       numba==0.61.2 \
       tiktoken==0.9.0 \
