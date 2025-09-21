@@ -31,6 +31,7 @@ RUN set -eux; \
     sed -i 's|http://archive.ubuntu.com/ubuntu|mirror://mirrors.ubuntu.com/mirrors.txt|g' /etc/apt/sources.list; \
     apt-get update -o Acquire::Retries=5; \
     apt-get install -y --no-install-recommends \
+      tzdata \
       software-properties-common ca-certificates curl git wget gnupg tini \
       python3.10 python3.10-venv python3.10-dev python3-pip \
       libglib2.0-0 libnss3 libxss1 libasound2 libatk1.0-0 \
@@ -42,6 +43,7 @@ RUN set -eux; \
       poppler-utils poppler-data ghostscript \
       fontconfig fonts-dejavu-core \
     || (apt-get update -o Acquire::Retries=5 && apt-get install -y --no-install-recommends --fix-missing \
+      tzdata \
       software-properties-common ca-certificates curl git wget gnupg tini \
       python3.10 python3.10-venv python3.10-dev python3-pip \
       libglib2.0-0 libnss3 libxss1 libasound2 libatk1.0-0 \
@@ -52,6 +54,8 @@ RUN set -eux; \
       libatspi2.0-0 libgcc1 libstdc++6 \
       poppler-utils poppler-data ghostscript \
       fontconfig fonts-dejavu-core); \
+    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime; \
+    echo $TZ > /etc/timezone; \
     rm -rf /var/lib/apt/lists/*
 
 # (Chrome browser not installed here – using external Chrome via sidecar)
